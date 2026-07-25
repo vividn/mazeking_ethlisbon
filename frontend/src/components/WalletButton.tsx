@@ -10,6 +10,22 @@ import type { ColorScheme } from '../types';
 import { useOwnedMazes } from '../hooks/useOwnedMazes';
 import { pickTextColor } from '../lib/contrastText';
 
+/**
+ * Strip alpha from a theme colour.
+ *
+ * The header palette is deliberately translucent — `headerBackgroundColor` is
+ * `hsla(h, 28%, 14%, 0.55)` — which is right for a bar laid over the maze but
+ * wrong for a popover: the maze shows straight through the menu and makes it
+ * hard to read. Reuse the hue, drop the transparency.
+ */
+export function opaque(color: string): string {
+  const m = color.match(/^(hsla|rgba)\(([^)]+)\)$/i);
+  if (!m) return color;
+  const parts = m[2].split(',').map((p) => p.trim());
+  if (parts.length === 4) parts.pop();
+  return `${m[1].slice(0, 3)}(${parts.join(',')})`;
+}
+
 function shortAddress(addr: `0x${string}`): string {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
@@ -60,6 +76,35 @@ export function WalletButton({ colors }: WalletButtonProps) {
     };
   }, [open]);
 
+  /**
+   * Re-open the wallet's account picker.
+   *
+   * Calling connect() again is a no-op while already connected, which is why
+   * this appeared to do nothing. The working route is asking the provider to
+   * re-grant `eth_accounts`, which is what makes MetaMask (and most injected
+   * wallets) show the account chooser. Wallets that don't implement it — or a
+   * user who dismisses the prompt — fall back to disconnecting, so the button
+   * always leads somewhere.
+   */
+  const handleSwitchWallet = async () => {
+    setOpen(false);
+    try {
+      const provider = (await connector?.getProvider()) as
+        | { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> }
+        | undefined;
+      if (provider?.request) {
+        await provider.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }],
+        });
+        return;
+      }
+    } catch {
+      // Unsupported method, or the user dismissed the prompt.
+    }
+    disconnect();
+  };
+
   if (!isConnected || !address) {
     const first = connectors[0];
     return (
@@ -71,7 +116,7 @@ export function WalletButton({ colors }: WalletButtonProps) {
         style={{ ...styles.pill, borderColor: fg, color: fg }}
         title={first ? `Connect with ${first.name}` : 'No wallet detected'}
       >
-        {isPending ? 'Connecting…' : 'Connect'}
+        {isPending ? 'Connecting…' : 'Connect Wallet'}
       </button>
     );
   }
@@ -106,7 +151,7 @@ export function WalletButton({ colors }: WalletButtonProps) {
           role="menu"
           style={{
             ...styles.menu,
-            backgroundColor: colors.headerBackgroundColor,
+            backgroundColor: opaque(colors.headerBackgroundColor),
             borderColor: fg,
             color: fg,
           }}
@@ -158,18 +203,11 @@ export function WalletButton({ colors }: WalletButtonProps) {
             </div>
           )}
 
-          {/* Switching accounts is a wallet-side action: re-running connect
-              prompts the wallet's account picker. Wagmi has no generic
-              "switch account" call, so this is the honest route. */}
           <button
             type="button"
             role="menuitem"
             data-testid="wallet-switch"
-            onClick={() => {
-              const first = connectors[0];
-              if (first) connect({ connector: first });
-              setOpen(false);
-            }}
+            onClick={handleSwitchWallet}
             style={{ ...styles.menuItem, color: fg }}
           >
             Switch wallet…
