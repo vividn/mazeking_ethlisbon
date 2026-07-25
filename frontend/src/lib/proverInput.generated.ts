@@ -30,6 +30,8 @@ export interface ProverInputCircuit {
   maze_hash: `0x${string}`;
   /** public · u32 */
   move_count: number;
+  /** public · Field (32-byte BN254 scalar) */
+  sender: `0x${string}`;
   /** private · u16 */
   width: number;
   /** private · u16 */
@@ -64,6 +66,7 @@ export interface ProverInputCircuit {
 export const PROVER_INPUT_KEYS = [
   'maze_hash',
   'move_count',
+  'sender',
   'width',
   'height',
   'start_x',
@@ -87,4 +90,5 @@ export const PROVER_INPUT_KEYS = [
 export const PROVER_PUBLIC_INPUT_KEYS = [
   'maze_hash',
   'move_count',
+  'sender',
 ] as const satisfies ReadonlyArray<keyof ProverInputCircuit>;

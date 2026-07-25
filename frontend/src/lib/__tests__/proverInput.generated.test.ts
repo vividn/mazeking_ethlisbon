@@ -36,12 +36,16 @@ describe('proverInput.generated.ts (codegen from circuit ABI)', () => {
     expect(PROVER_INPUT_KEYS).toContain('move_count');
   });
 
-  it('PROVER_PUBLIC_INPUT_KEYS is exactly [maze_hash, move_count]', () => {
+  it('PROVER_PUBLIC_INPUT_KEYS is exactly [maze_hash, move_count, sender]', () => {
     // Hash-as-public-input architecture (ma-6cr.6). If this ever fails,
     // it's the same class of breakage as ma-3xv would catch on the count
     // side: the circuit's `pub` markers and the on-chain
     // PUBLIC_INPUTS_LENGTH must move together with this array.
-    expect([...PROVER_PUBLIC_INPUT_KEYS]).toEqual(['maze_hash', 'move_count']);
+    expect([...PROVER_PUBLIC_INPUT_KEYS]).toEqual([
+      'maze_hash',
+      'move_count',
+      'sender',
+    ]);
   });
 
   it('generateProverInput returns an object whose keys equal PROVER_INPUT_KEYS exactly', () => {
@@ -53,7 +57,14 @@ describe('proverInput.generated.ts (codegen from circuit ABI)', () => {
     const zk = serializeForZk(maze, startPos, robePos, scepterPos, goalPos);
     const placeholderHash =
       '0x0000000000000000000000000000000000000000000000000000000000000000' as const;
-    const input = generateProverInput(zk, solution, placeholderHash);
+    const placeholderSender =
+      '0x00000000000000000000000000000000000000ff' as const;
+    const input = generateProverInput(
+      zk,
+      solution,
+      placeholderHash,
+      placeholderSender
+    );
 
     const actual = Object.keys(input).sort();
     const expected = [...PROVER_INPUT_KEYS].sort();

@@ -19,7 +19,7 @@ import { getContractAddress } from '../lib/contracts';
  * Hook to mint an NFT under the hash-as-public-input architecture
  * (ma-6cr.6). The on-chain signature is now:
  *
- *   mintWithProof(bytes proof, bytes32 mazeHash, bytes layout, uint16 moveCount)
+ *   mintWithProof(bytes proof, bytes32 mazeHash, bytes layout, uint16 moveCount, bool bearer)
  *
  * `mazeHash` is the Pedersen hash of the canonical layout (computed via
  * bb.js — that wiring lives in ma-6cr.8). `layout` is the canonical bytes
@@ -58,7 +58,13 @@ export function useMintNFT() {
     proof: Uint8Array,
     mazeHash: `0x${string}`,
     layout: Uint8Array,
-    moveCount: number
+    moveCount: number,
+    /**
+     * True when the proof was produced unbound (no wallet connected). The
+     * contract then verifies against the zero sentinel instead of msg.sender,
+     * which makes the proof copyable — opt-in only.
+     */
+    bearer: boolean = false
   ) => {
     setSimulateError(null);
 
@@ -106,7 +112,7 @@ export function useMintNFT() {
           address: nftAddress,
           abi: MazeKingNFTAbi,
           functionName: 'mintWithProof',
-          args: [proofHex, mazeHash, layoutHex, moveCount],
+          args: [proofHex, mazeHash, layoutHex, moveCount, bearer],
         });
       } catch (simErr) {
         const reason =
@@ -126,7 +132,7 @@ export function useMintNFT() {
       address: nftAddress,
       abi: MazeKingNFTAbi,
       functionName: 'mintWithProof',
-      args: [proofHex, mazeHash, layoutHex, moveCount],
+      args: [proofHex, mazeHash, layoutHex, moveCount, bearer],
     });
   };
 
