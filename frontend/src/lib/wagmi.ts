@@ -1,5 +1,5 @@
 import { createConfig, http } from 'wagmi';
-import { sepolia } from 'wagmi/chains';
+import { polygonZkEvm, sepolia } from 'wagmi/chains';
 import { injected } from 'wagmi/connectors';
 import { defineChain } from 'viem';
 
@@ -23,15 +23,17 @@ const anvil = defineChain({
 });
 
 /**
- * Wagmi configuration for MazeKing dApp
- * Supports Anvil (localhost) and Sepolia testnet.
+ * Wagmi configuration for MazeKing dApp.
+ * Supports Anvil (localhost), Sepolia testnet, and Polygon zkEVM mainnet.
  *
  * The first chain in the array is wagmi's default for new connections.
- * Dev: Anvil first (rapid local iteration). Prod: Sepolia first (deployed).
+ * Dev: Anvil first (rapid local iteration).
+ * Prod: Polygon zkEVM first — the production deployment target. Sepolia stays
+ * in the list so the existing testnet deployment remains reachable.
  */
 const chainsByMode = import.meta.env.DEV
-  ? ([anvil, sepolia] as const)
-  : ([sepolia, anvil] as const);
+  ? ([anvil, sepolia, polygonZkEvm] as const)
+  : ([polygonZkEvm, sepolia, anvil] as const);
 
 // Sepolia RPC selection. Alchemy's `demo` key blocks CORS from non-Alchemy
 // origins, so it can never be a fallback in a browser dApp. Default to a
@@ -40,15 +42,32 @@ const chainsByMode = import.meta.env.DEV
 const PUBLIC_SEPOLIA_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
 const sepoliaRpcUrl = import.meta.env.VITE_SEPOLIA_RPC_URL || PUBLIC_SEPOLIA_RPC;
 
-if (!import.meta.env.DEV && !import.meta.env.VITE_SEPOLIA_RPC_URL) {
-  // Fail-loud signal for production deploys missing the env var. We still
-  // boot (with a public RPC) so gameplay isn't dead, but operators see this.
-  // eslint-disable-next-line no-console
-  console.error(
-    '[mazeking] VITE_SEPOLIA_RPC_URL is not set; falling back to public RPC ' +
-      `(${PUBLIC_SEPOLIA_RPC}). Set a dedicated RPC key in the deploy ` +
-      'environment for production reliability.'
-  );
+// Polygon zkEVM mainnet RPC. Same reasoning as Sepolia: the public endpoint
+// keeps the dApp alive, but it is shared and rate-limited, so a real deploy
+// should set VITE_POLYGON_ZKEVM_RPC_URL to a dedicated key.
+const PUBLIC_POLYGON_ZKEVM_RPC = 'https://zkevm-rpc.com';
+const polygonZkEvmRpcUrl =
+  import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL || PUBLIC_POLYGON_ZKEVM_RPC;
+
+if (!import.meta.env.DEV) {
+  // Fail-loud signals for production deploys missing env vars. We still boot
+  // (with public RPCs) so gameplay isn't dead, but operators see this.
+  if (!import.meta.env.VITE_SEPOLIA_RPC_URL) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[mazeking] VITE_SEPOLIA_RPC_URL is not set; falling back to public RPC ' +
+        `(${PUBLIC_SEPOLIA_RPC}). Set a dedicated RPC key in the deploy ` +
+        'environment for production reliability.'
+    );
+  }
+  if (!import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL) {
+    // eslint-disable-next-line no-console
+    console.error(
+      '[mazeking] VITE_POLYGON_ZKEVM_RPC_URL is not set; falling back to ' +
+        `public RPC (${PUBLIC_POLYGON_ZKEVM_RPC}). Polygon zkEVM is the ` +
+        'production chain — set a dedicated RPC key in the deploy environment.'
+    );
+  }
 }
 
 export const config = createConfig({
@@ -57,6 +76,7 @@ export const config = createConfig({
   transports: {
     [anvil.id]: http('http://127.0.0.1:8545'),
     [sepolia.id]: http(sepoliaRpcUrl),
+    [polygonZkEvm.id]: http(polygonZkEvmRpcUrl),
   },
   ssr: false,
 });
