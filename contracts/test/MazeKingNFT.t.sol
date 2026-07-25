@@ -291,6 +291,73 @@ contract MazeKingNFTTest is Test {
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
     }
 
+    function test_MazesOf_ListsSolvedMazes() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        assertEq(nft.mazeCountOf(user), 0);
+        assertEq(nft.mazesOf(user).length, 0);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        uint256[] memory owned = nft.mazesOf(user);
+        assertEq(owned.length, 1);
+        assertEq(owned[0], uint256(mazeHash));
+        assertEq(nft.mazeCountOf(user), 1);
+
+        // Another solver's collection is independent.
+        assertEq(nft.mazeCountOf(address(0xFEE1)), 0);
+    }
+
+    function test_MazesOf_ResolvingTheSameMazeTwiceDoesNotDuplicate() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.startPrank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 80, false);
+        vm.stopPrank();
+
+        assertEq(nft.mazeCountOf(user), 1);
+    }
+
+    /// The reason enumeration is guarded by its own flag rather than by
+    /// `isFirstMint`: isFirstMint is `balanceOf == 0`, which becomes true
+    /// again after a transfer. Without the flag, re-solving would append a
+    /// duplicate entry and inflate the collection count.
+    function test_MazesOf_TransferAwayThenResolveDoesNotDuplicate() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+        assertEq(nft.mazeCountOf(user), 1);
+
+        vm.prank(user);
+        nft.safeTransferFrom(user, address(0xFEE1), tokenId, 1, "");
+        assertEq(nft.balanceOf(user, tokenId), 0);
+
+        // Solved again after giving it away — still one entry.
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 90, false);
+        assertEq(nft.mazeCountOf(user), 1);
+    }
+
+    function test_MazesOfSlice_Pages() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        assertEq(nft.mazesOfSlice(user, 0, 10).length, 1);
+        // start past the end returns empty rather than reverting
+        assertEq(nft.mazesOfSlice(user, 5, 10).length, 0);
+        assertEq(nft.mazesOfSlice(user, 0, 0).length, 0);
+    }
+
     function test_MintWithProof_InvalidProof() public {
         verifier.setShouldPass(false);
 

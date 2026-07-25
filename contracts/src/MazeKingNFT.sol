@@ -43,6 +43,14 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     mapping(uint256 => uint32) public optimalMoves;
     mapping(uint256 => bool) public registered;
     mapping(uint256 => bool) public registrarApproved;
+
+    // Owner enumeration — the token ids each address has ever minted, in mint
+    // order. Lets a client list a collection with one view call instead of
+    // scanning ERC-1155 transfer logs over a block range.
+    mapping(address => uint256[]) private _mintedBy;
+    // Set once per (address, tokenId) so a transfer-then-remint cannot append
+    // a duplicate entry.
+    mapping(address => mapping(uint256 => bool)) private _hasMinted;
     // Mazes flagged by the registrar as unacceptable (filtered from public views).
     // Tokens already minted remain owned; this is a display-layer signal.
     mapping(uint256 => bool) public disqualified;
@@ -177,6 +185,24 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
             _mint(msg.sender, tokenId, 1, "");
         }
 
+        // 3b. Enumeration. ERC-1155 has no way to list an address's tokens, so
+        //     without this a client must scan transfer logs — which needs a
+        //     block range, silently misses anything older than that range, and
+        //     breaks entirely on RPCs with narrow eth_getLogs limits.
+        //
+        //     Guarded by its own flag rather than `isFirstMint`: isFirstMint is
+        //     `balanceOf == 0`, which becomes true again if a holder transfers
+        //     a maze away, and would push a duplicate on a re-mint. This flag
+        //     is set once and never cleared.
+        //
+        //     Records mazes SOLVED, not currently held — a transfer does not
+        //     remove an entry. Callers wanting present ownership should filter
+        //     the result by balanceOf, which is one cheap multicall.
+        if (!_hasMinted[msg.sender][tokenId]) {
+            _hasMinted[msg.sender][tokenId] = true;
+            _mintedBy[msg.sender].push(tokenId);
+        }
+
         // 4. Store the maze layout on first mint of this maze (any user).
         //    Layout is shared across all solvers; subsequent mints are O(1).
         if (layouts[tokenId].length == 0) {
@@ -238,6 +264,38 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
             return IMazeRenderer(r).tokenURI(tokenId, layout);
         }
         return super.uri(tokenId);
+    }
+
+    /// @notice Every maze this address has solved, in mint order.
+    /// @dev Enumeration for clients: one call replaces a transfer-log scan.
+    ///      Entries persist through transfers — this is "solved", not "held".
+    ///      Filter by `balanceOf` if you need present ownership.
+    function mazesOf(address owner) external view returns (uint256[] memory) {
+        return _mintedBy[owner];
+    }
+
+    /// @notice How many distinct mazes this address has solved.
+    /// @dev Cheap enough for a header badge; avoids returning the whole array.
+    function mazeCountOf(address owner) external view returns (uint256) {
+        return _mintedBy[owner].length;
+    }
+
+    /// @notice Page through `mazesOf` for addresses with large collections.
+    /// @dev Returns fewer than `limit` items when the end is reached, and an
+    ///      empty array when `start` is past the end.
+    function mazesOfSlice(address owner, uint256 start, uint256 limit)
+        external
+        view
+        returns (uint256[] memory page)
+    {
+        uint256[] storage all = _mintedBy[owner];
+        if (start >= all.length) return new uint256[](0);
+        uint256 end = start + limit;
+        if (end > all.length) end = all.length;
+        page = new uint256[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            page[i - start] = all[i];
+        }
     }
 
     /// @notice Record the optimal (minimum) move count for a maze
