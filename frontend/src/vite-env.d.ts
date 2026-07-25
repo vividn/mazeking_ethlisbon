@@ -13,9 +13,11 @@ interface ImportMetaEnv {
    * Alchemy API key used to derive RPC endpoints for every configured chain.
    *
    * Public once built — protected by Alchemy's origin allowlist rather than by
-   * secrecy, so it belongs in a GitHub Actions *variable*, not a secret. A key
-   * restricted to the production domain will not work from localhost;
-   * allowlist localhost or use a separate unrestricted key for development.
+   * secrecy, so it belongs in a GitHub Actions *variable*, not a secret.
+   *
+   * The production key is domain-restricted and is not used for local work.
+   * Development supplies its own key in a local .env file; copy .env.example
+   * and fill it in.
    */
   readonly VITE_ALCHEMY_KEY?: string;
 

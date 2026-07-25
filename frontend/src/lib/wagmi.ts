@@ -48,13 +48,17 @@ const chainsByMode = import.meta.env.DEV
  * IMPORTANT: this key is NOT secret. Vite inlines every VITE_* value into the
  * bundle, so it ships in the deployed JavaScript and anyone can read it. What
  * protects it is Alchemy's origin allowlist, not concealment — which is why it
- * belongs in a GitHub Actions *variable* rather than a secret. Two consequences
- * worth knowing:
- *   - A key restricted to the production domain will NOT work from localhost.
- *     Allowlist localhost, or use a separate unrestricted key for dev.
- *   - Origin allowlists are checked from browser-sent headers, which non-browser
- *     clients can spoof. Treat it as protection against casual reuse, not as a
- *     boundary — pair it with a compute-unit cap so a leak is bounded in cost.
+ * belongs in a GitHub Actions *variable* rather than a secret.
+ *
+ * The deployed key is restricted to the production domain and is therefore not
+ * usable locally. Local development supplies its own key through a .env file
+ * (see .env.example); the production endpoint is not shared with contributors,
+ * and nothing here needs to change to support that.
+ *
+ * Origin allowlists are checked from browser-sent headers, which non-browser
+ * clients can spoof. Treat the restriction as protection against casual reuse
+ * rather than a hard boundary — pair it with a compute-unit cap so a leak is
+ * bounded in cost.
  *
  * Alchemy's `demo` key is deliberately never used as a fallback: it blocks CORS
  * from non-Alchemy origins, so it can only fail in a browser dApp.
