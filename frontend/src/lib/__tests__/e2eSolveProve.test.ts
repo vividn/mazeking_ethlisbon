@@ -38,6 +38,12 @@ const CIRCUIT_PATH = resolve(
   '../../../../maze_prover/target/maze_prover.json'
 );
 
+// Any address works here: `sender` is committed as a public input but is not
+// constrained in-circuit, so witness generation only needs a well-formed
+// field element. The binding is enforced on-chain, where the contract passes
+// msg.sender and a mismatched proof fails verification.
+const TEST_SENDER = '0x00000000000000000000000000000000000000ff' as const;
+
 let circuit: CompiledCircuit;
 
 beforeAll(async () => {
@@ -56,7 +62,7 @@ async function buildProverInput(
   const zk = serializeForZk(maze, start, robe, scepter, goal);
   const layoutBytes = serializeLayoutBytes(zk);
   const mazeHash = await computeMazeHash(layoutBytes);
-  return generateProverInput(zk, moves, mazeHash);
+  return generateProverInput(zk, moves, mazeHash, TEST_SENDER);
 }
 
 describe('e2e solve → witness (fast tier)', () => {

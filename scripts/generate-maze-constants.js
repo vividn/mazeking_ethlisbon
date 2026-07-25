@@ -53,10 +53,17 @@ function loadConfig() {
 
   // Compute derived values
   const maxPackedBytes = Math.floor(maxMazeCells / 2);
-  // Hash-as-public-input architecture (ma-6cr.6):
-  //   public  = [maze_hash, move_count]
+  // Hash-as-public-input architecture (ma-6cr.6), sender-bound:
+  //   public  = [maze_hash, move_count, sender]
   //   private = layout (header + packed_cells) + moves
-  const publicInputsLength = 2;
+  //
+  // `sender` binds the proof to the account that mints it. Without it the
+  // proof is a bearer credential: anyone watching the mempool can lift it
+  // from calldata and front-run the mint. It is unconstrained inside the
+  // circuit on purpose — a proof only verifies against the exact public
+  // input vector it was produced for, so committing the address is the
+  // whole mechanism.
+  const publicInputsLength = 3;
   // Canonical layout bytes that get Pedersen-hashed to produce maze_hash:
   //   20 header bytes (10 BE u16: width, height, sx, sy, robe_x, robe_y,
   //                    scepter_x, scepter_y, gx, gy)
@@ -134,7 +141,10 @@ library MazeConstants {
 
     /**
      * @notice Number of public inputs for ZK proof verification
-     * @dev [maze_hash, move_count] under hash-as-public-input architecture
+     * @dev [maze_hash, move_count, sender] under hash-as-public-input
+     *      architecture. The sender input binds the proof to the minting
+     *      account, so a proof cannot be lifted from calldata and replayed
+     *      by a front-runner.
      */
     uint256 internal constant PUBLIC_INPUTS_LENGTH = ${config.publicInputsLength};
 

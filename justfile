@@ -488,6 +488,27 @@ test-e2e-mint: deploy-local
     @echo -e "{{YELLOW}}[test]{{NC}} Running e2e mint (solve → prove → mint on anvil)..."
     cd {{frontend_dir}} && {{pnpm}} test:e2e-mint
 
+# === REGISTRAR ===
+
+# Register an official maze and set its optimal move count.
+#
+# This is what makes badges reachable. DefaultBadgeAwarder gates every medal
+# behind `optimalMoves[tokenId] > 0`, so an unregistered maze awards nothing —
+# the ROBOT crown included. The optimum is a BFS over the product graph
+# (x, y, hasRobe, hasScepter); a naive shortest path would under-count and
+# hand out crowns for imperfect solves.
+#
+#   just register-maze "Zero Knowledge" 0xNFT https://rpc... 0xKEY
+#   just register-maze-dry "Zero Knowledge"
+register-maze seed nft rpc key:
+    cd {{frontend_dir}} && {{pnpm}} exec vite-node scripts/register-maze.ts -- \
+        --seed "{{seed}}" --nft "{{nft}}" --rpc "{{rpc}}" --key "{{key}}"
+
+# Preview a seed's maze hash, tokenId and optimum without touching a chain.
+register-maze-dry seed:
+    cd {{frontend_dir}} && {{pnpm}} exec vite-node scripts/register-maze.ts -- \
+        --seed "{{seed}}" --dry-run
+
 # === FORMATTING ===
 
 # Format all code
