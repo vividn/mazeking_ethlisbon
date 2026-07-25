@@ -1,5 +1,5 @@
 import { createConfig, http } from 'wagmi';
-import { sepolia } from 'wagmi/chains';
+import { polygonZkEvm, sepolia } from 'wagmi/chains';
 import { injected } from 'wagmi/connectors';
 import { defineChain } from 'viem';
 
@@ -23,31 +23,73 @@ const anvil = defineChain({
 });
 
 /**
- * Wagmi configuration for MazeKing dApp
- * Supports Anvil (localhost) and Sepolia testnet.
+ * Wagmi configuration for MazeKing dApp.
+ * Supports Anvil (localhost), Sepolia testnet, and Polygon zkEVM mainnet.
  *
  * The first chain in the array is wagmi's default for new connections.
- * Dev: Anvil first (rapid local iteration). Prod: Sepolia first (deployed).
+ * Dev: Anvil first (rapid local iteration).
+ * Prod: Polygon zkEVM first — the production deployment target. Sepolia stays
+ * in the list so the existing testnet deployment remains reachable.
  */
 const chainsByMode = import.meta.env.DEV
-  ? ([anvil, sepolia] as const)
-  : ([sepolia, anvil] as const);
+  ? ([anvil, sepolia, polygonZkEvm] as const)
+  : ([polygonZkEvm, sepolia, anvil] as const);
 
-// Sepolia RPC selection. Alchemy's `demo` key blocks CORS from non-Alchemy
-// origins, so it can never be a fallback in a browser dApp. Default to a
-// public CORS-enabled RPC; production deploys should set VITE_SEPOLIA_RPC_URL
-// to a dedicated key (Alchemy/Infura/etc) for rate limits and reliability.
+/**
+ * RPC endpoint selection.
+ *
+ * Precedence per chain: an explicit VITE_<CHAIN>_RPC_URL, else an endpoint
+ * derived from VITE_ALCHEMY_KEY, else a public fallback.
+ *
+ * VITE_ALCHEMY_KEY covers every chain at once, so there is a single value to
+ * rotate and no way for one chain to end up on a stale key while another is
+ * current.
+ *
+ * IMPORTANT: this key is NOT secret. Vite inlines every VITE_* value into the
+ * bundle, so it ships in the deployed JavaScript and anyone can read it. What
+ * protects it is Alchemy's origin allowlist, not concealment — which is why it
+ * belongs in a GitHub Actions *variable* rather than a secret.
+ *
+ * The deployed key is restricted to the production domain and is therefore not
+ * usable locally. Local development supplies its own key through a .env file
+ * (see .env.example); the production endpoint is not shared with contributors,
+ * and nothing here needs to change to support that.
+ *
+ * Origin allowlists are checked from browser-sent headers, which non-browser
+ * clients can spoof. Treat the restriction as protection against casual reuse
+ * rather than a hard boundary — pair it with a compute-unit cap so a leak is
+ * bounded in cost.
+ *
+ * Alchemy's `demo` key is deliberately never used as a fallback: it blocks CORS
+ * from non-Alchemy origins, so it can only fail in a browser dApp.
+ */
+const ALCHEMY_KEY = import.meta.env.VITE_ALCHEMY_KEY;
+
+/** Alchemy endpoint for a network subdomain, or undefined when no key is set. */
+const alchemyRpc = (network: string): string | undefined =>
+  ALCHEMY_KEY ? `https://${network}.g.alchemy.com/v2/${ALCHEMY_KEY}` : undefined;
+
 const PUBLIC_SEPOLIA_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
-const sepoliaRpcUrl = import.meta.env.VITE_SEPOLIA_RPC_URL || PUBLIC_SEPOLIA_RPC;
+const sepoliaRpcUrl =
+  import.meta.env.VITE_SEPOLIA_RPC_URL ||
+  alchemyRpc('eth-sepolia') ||
+  PUBLIC_SEPOLIA_RPC;
 
-if (!import.meta.env.DEV && !import.meta.env.VITE_SEPOLIA_RPC_URL) {
-  // Fail-loud signal for production deploys missing the env var. We still
-  // boot (with a public RPC) so gameplay isn't dead, but operators see this.
+const PUBLIC_POLYGON_ZKEVM_RPC = 'https://zkevm-rpc.com';
+const polygonZkEvmRpcUrl =
+  import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL ||
+  alchemyRpc('polygonzkevm-mainnet') ||
+  PUBLIC_POLYGON_ZKEVM_RPC;
+
+if (!import.meta.env.DEV && !ALCHEMY_KEY) {
+  // One signal rather than one per chain: with no key set, every network is on
+  // a shared public endpoint. The dApp still boots so gameplay is not dead,
+  // but a production deploy should not be discovering this under load.
   // eslint-disable-next-line no-console
   console.error(
-    '[mazeking] VITE_SEPOLIA_RPC_URL is not set; falling back to public RPC ' +
-      `(${PUBLIC_SEPOLIA_RPC}). Set a dedicated RPC key in the deploy ` +
-      'environment for production reliability.'
+    '[mazeking] VITE_ALCHEMY_KEY is not set and no per-chain RPC overrides ' +
+      'were provided; falling back to shared public RPCs. Set a dedicated key ' +
+      'in the deploy environment for rate limits and reliability.'
   );
 }
 
@@ -57,6 +99,7 @@ export const config = createConfig({
   transports: {
     [anvil.id]: http('http://127.0.0.1:8545'),
     [sepolia.id]: http(sepoliaRpcUrl),
+    [polygonZkEvm.id]: http(polygonZkEvmRpcUrl),
   },
   ssr: false,
 });
