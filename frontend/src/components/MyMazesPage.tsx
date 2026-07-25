@@ -6,6 +6,7 @@ import { useAppOutlet } from '../App';
 import { PageHeader } from './PageHeader';
 import { KaztleText } from './KaztleText';
 import { MazeLightbox } from './MazeLightbox';
+import { decodeBadges } from '../lib/badges';
 
 function shortId(tokenId: bigint): string {
   const hex = tokenId.toString(16).padStart(64, '0');
@@ -30,6 +31,7 @@ export function MyMazesPage() {
   const renderTile = (maze: OwnedMaze) => {
     const movesLabel =
       maze.minMoves !== null ? `${maze.minMoves} moves` : 'unsolved';
+    const earned = decodeBadges(maze.badges);
     return (
       <button
         key={maze.tokenId.toString()}
@@ -55,6 +57,15 @@ export function MyMazesPage() {
         <div style={{ ...styles.movesLabel, color: textColor }}>
           {movesLabel}
         </div>
+        {earned.length > 0 && (
+          <div style={styles.badgeRow}>
+            {earned.map((b) => (
+              <span key={b.key} style={styles.badge} title={b.description}>
+                {b.glyph}
+              </span>
+            ))}
+          </div>
+        )}
       </button>
     );
   };
@@ -189,6 +200,18 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.85,
     textAlign: 'center',
     minHeight: '16px',
+  },
+  badgeRow: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: '4px',
+    marginTop: '2px',
+    minHeight: '20px',
+  },
+  badge: {
+    fontSize: '16px',
+    lineHeight: '20px',
+    cursor: 'help',
   },
   empty: {
     padding: '40px 20px',
