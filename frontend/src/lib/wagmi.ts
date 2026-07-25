@@ -35,39 +35,58 @@ const chainsByMode = import.meta.env.DEV
   ? ([anvil, sepolia, polygonZkEvm] as const)
   : ([polygonZkEvm, sepolia, anvil] as const);
 
-// Sepolia RPC selection. Alchemy's `demo` key blocks CORS from non-Alchemy
-// origins, so it can never be a fallback in a browser dApp. Default to a
-// public CORS-enabled RPC; production deploys should set VITE_SEPOLIA_RPC_URL
-// to a dedicated key (Alchemy/Infura/etc) for rate limits and reliability.
-const PUBLIC_SEPOLIA_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
-const sepoliaRpcUrl = import.meta.env.VITE_SEPOLIA_RPC_URL || PUBLIC_SEPOLIA_RPC;
+/**
+ * RPC endpoint selection.
+ *
+ * Precedence per chain: an explicit VITE_<CHAIN>_RPC_URL, else an endpoint
+ * derived from VITE_ALCHEMY_KEY, else a public fallback.
+ *
+ * VITE_ALCHEMY_KEY covers every chain at once, so there is a single value to
+ * rotate and no way for one chain to end up on a stale key while another is
+ * current.
+ *
+ * IMPORTANT: this key is NOT secret. Vite inlines every VITE_* value into the
+ * bundle, so it ships in the deployed JavaScript and anyone can read it. What
+ * protects it is Alchemy's origin allowlist, not concealment — which is why it
+ * belongs in a GitHub Actions *variable* rather than a secret. Two consequences
+ * worth knowing:
+ *   - A key restricted to the production domain will NOT work from localhost.
+ *     Allowlist localhost, or use a separate unrestricted key for dev.
+ *   - Origin allowlists are checked from browser-sent headers, which non-browser
+ *     clients can spoof. Treat it as protection against casual reuse, not as a
+ *     boundary — pair it with a compute-unit cap so a leak is bounded in cost.
+ *
+ * Alchemy's `demo` key is deliberately never used as a fallback: it blocks CORS
+ * from non-Alchemy origins, so it can only fail in a browser dApp.
+ */
+const ALCHEMY_KEY = import.meta.env.VITE_ALCHEMY_KEY;
 
-// Polygon zkEVM mainnet RPC. Same reasoning as Sepolia: the public endpoint
-// keeps the dApp alive, but it is shared and rate-limited, so a real deploy
-// should set VITE_POLYGON_ZKEVM_RPC_URL to a dedicated key.
+/** Alchemy endpoint for a network subdomain, or undefined when no key is set. */
+const alchemyRpc = (network: string): string | undefined =>
+  ALCHEMY_KEY ? `https://${network}.g.alchemy.com/v2/${ALCHEMY_KEY}` : undefined;
+
+const PUBLIC_SEPOLIA_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
+const sepoliaRpcUrl =
+  import.meta.env.VITE_SEPOLIA_RPC_URL ||
+  alchemyRpc('eth-sepolia') ||
+  PUBLIC_SEPOLIA_RPC;
+
 const PUBLIC_POLYGON_ZKEVM_RPC = 'https://zkevm-rpc.com';
 const polygonZkEvmRpcUrl =
-  import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL || PUBLIC_POLYGON_ZKEVM_RPC;
+  import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL ||
+  alchemyRpc('polygonzkevm-mainnet') ||
+  PUBLIC_POLYGON_ZKEVM_RPC;
 
-if (!import.meta.env.DEV) {
-  // Fail-loud signals for production deploys missing env vars. We still boot
-  // (with public RPCs) so gameplay isn't dead, but operators see this.
-  if (!import.meta.env.VITE_SEPOLIA_RPC_URL) {
-    // eslint-disable-next-line no-console
-    console.error(
-      '[mazeking] VITE_SEPOLIA_RPC_URL is not set; falling back to public RPC ' +
-        `(${PUBLIC_SEPOLIA_RPC}). Set a dedicated RPC key in the deploy ` +
-        'environment for production reliability.'
-    );
-  }
-  if (!import.meta.env.VITE_POLYGON_ZKEVM_RPC_URL) {
-    // eslint-disable-next-line no-console
-    console.error(
-      '[mazeking] VITE_POLYGON_ZKEVM_RPC_URL is not set; falling back to ' +
-        `public RPC (${PUBLIC_POLYGON_ZKEVM_RPC}). Polygon zkEVM is the ` +
-        'production chain — set a dedicated RPC key in the deploy environment.'
-    );
-  }
+if (!import.meta.env.DEV && !ALCHEMY_KEY) {
+  // One signal rather than one per chain: with no key set, every network is on
+  // a shared public endpoint. The dApp still boots so gameplay is not dead,
+  // but a production deploy should not be discovering this under load.
+  // eslint-disable-next-line no-console
+  console.error(
+    '[mazeking] VITE_ALCHEMY_KEY is not set and no per-chain RPC overrides ' +
+      'were provided; falling back to shared public RPCs. Set a dedicated key ' +
+      'in the deploy environment for rate limits and reliability.'
+  );
 }
 
 export const config = createConfig({
