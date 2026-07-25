@@ -41,6 +41,7 @@ import {
   createTestMaze,
   generateProverInput,
   serializeForZk,
+  UNBOUND_SENDER,
 } from '../zkSerialize';
 import { computeMazeHash } from '../mazeIdentity';
 import { serializeLayoutBytes } from '../tokenId';
@@ -62,6 +63,11 @@ const ANVIL_RPC = process.env.ANVIL_RPC ?? 'http://127.0.0.1:8545';
 // account that minted the NFT here is also the deployer/owner.
 const DEPLOYER_PRIVATE_KEY =
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const;
+
+// Anvil account #1 — a different account from the deployer, used to prove
+// that an unbound proof really is spendable by anyone holding it.
+const BEARER_PRIVATE_KEY =
+  '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as const;
 
 const RUN_MINT = process.env.RUN_E2E_MINT === '1';
 
@@ -173,7 +179,8 @@ describe.runIf(RUN_MINT)(
         address: nftAddress,
         abi: MazeKingNFTAbi,
         functionName: 'mintWithProof',
-        args: [proofHex, mazeHash, layoutHex, moveCount],
+        // false = bound proof: publicInputs[2] carries this account.
+        args: [proofHex, mazeHash, layoutHex, moveCount, false],
       });
 
       const receipt = await publicClient.waitForTransactionReceipt({
@@ -210,6 +217,83 @@ describe.runIf(RUN_MINT)(
         args: [expectedTokenId],
       })) as Hex;
       expect(storedLayout.toLowerCase()).toBe(layoutHex.toLowerCase());
+    }, 600_000);
+
+    // The "practice proof" path: a player solves without a wallet connected,
+    // so the proof commits to UNBOUND_SENDER instead of an address. It must
+    // still verify against the real on-chain verifier when submitted with
+    // bearer = true — and, being unbound, it must work from an account that
+    // had nothing to do with producing it.
+    it('mints a wallet-less practice proof via the bearer path', async () => {
+      const { maze, startPos, robePos, scepterPos, goalPos } = createTestMaze();
+      const path = findOptimalPath(
+        maze,
+        startPos,
+        robePos,
+        scepterPos,
+        goalPos
+      );
+      expect(path).not.toBeNull();
+
+      const zk = serializeForZk(maze, startPos, robePos, scepterPos, goalPos);
+      const layoutBytes = serializeLayoutBytes(zk);
+      const mazeHash = await computeMazeHash(layoutBytes);
+      // No address — exactly what the UI does before a wallet connects.
+      const proverInput = generateProverInput(
+        zk,
+        path!,
+        mazeHash,
+        UNBOUND_SENDER
+      );
+
+      const noir = new Noir(circuit);
+      const { witness } = await noir.execute(
+        proverInput as unknown as InputMap
+      );
+      const backend = new UltraHonkBackend(circuit.bytecode);
+      let proofBytes: Uint8Array;
+      try {
+        const result = await backend.generateProof(witness, { keccak: true });
+        proofBytes = result.proof;
+      } finally {
+        await backend.destroy();
+      }
+
+      // Deliberately submit from a DIFFERENT account than any notion of an
+      // author: an unbound proof belongs to whoever holds it.
+      const bearerAccount = privateKeyToAccount(BEARER_PRIVATE_KEY);
+      const transport = http(ANVIL_RPC);
+      const publicClient = createPublicClient({ chain: foundry, transport });
+      const walletClient = createWalletClient({
+        account: bearerAccount,
+        chain: foundry,
+        transport,
+      });
+
+      const txHash = await walletClient.writeContract({
+        address: nftAddress,
+        abi: MazeKingNFTAbi,
+        functionName: 'mintWithProof',
+        args: [
+          bytesToHex(proofBytes),
+          mazeHash,
+          bytesToHex(layoutBytes),
+          proverInput.move_count,
+          true, // bearer
+        ],
+      });
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+      });
+      expect(receipt.status).toBe('success');
+      expect(
+        (await publicClient.readContract({
+          address: nftAddress,
+          abi: MazeKingNFTAbi,
+          functionName: 'balanceOf',
+          args: [bearerAccount.address, BigInt(mazeHash)],
+        })) as bigint
+      ).toBe(1n);
     }, 600_000);
   }
 );

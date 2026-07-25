@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAccount, useConnect, useSwitchChain } from 'wagmi';
 import { sepolia } from 'wagmi/chains';
 import type { ColorScheme } from '../types';
@@ -125,6 +125,21 @@ export function MintBlock({
   const proofReady = proofState.stage === 'complete';
   const minting = isPending || isConfirming;
 
+  // How the completed proof relates to the connected wallet.
+  //   'bearer'  – proved with no wallet; mintable by anyone who copies it.
+  //   'matches' – bound to the connected account; the safe path.
+  //   'stale'   – bound to a DIFFERENT account (user switched wallets), so it
+  //               cannot verify and must be regenerated.
+  const proofBinding = !proofReady
+    ? 'none'
+    : proofState.boundTo == null
+      ? 'bearer'
+      : address && proofState.boundTo.toLowerCase() === address.toLowerCase()
+        ? 'matches'
+        : 'stale';
+
+  const [bearerAcknowledged, setBearerAcknowledged] = useState(false);
+
   const handleMint = async () => {
     if (mockMode) {
       console.log('[mockMode] Skipping real mint; visual review only.');
@@ -147,12 +162,25 @@ export function MintBlock({
     ) {
       return;
     }
+    // Two-step confirm: a bearer proof is copyable, so the first click
+    // surfaces the warning and only the second one spends it.
+    if (proofBinding === 'bearer' && !bearerAcknowledged) {
+      setBearerAcknowledged(true);
+      return;
+    }
+    if (proofBinding === 'stale') {
+      // Regenerating is the only option: the proof commits to the previous
+      // account, so it can never verify for this one.
+      await startProofGeneration();
+      return;
+    }
     try {
       await mintWithProof(
         proofState.proof,
         proofState.mazeHash,
         proofState.layoutBytes,
-        moveCount
+        moveCount,
+        proofBinding === 'bearer'
       );
     } catch (err) {
       console.error('mintWithProof threw:', err);
@@ -182,6 +210,10 @@ export function MintBlock({
         : 'Generating proof…';
   } else if (!isConnected) {
     mintLabel = 'Connect Wallet';
+  } else if (proofBinding === 'stale') {
+    mintLabel = 'Re-prove for this wallet';
+  } else if (proofBinding === 'bearer') {
+    mintLabel = bearerAcknowledged ? 'Mint anyway' : 'Mint NFT';
   } else if (!onSepolia) {
     mintLabel = sepoliaSupported ? 'Switch to Sepolia' : 'Wrong network';
     mintDisabled = !sepoliaSupported;
@@ -362,6 +394,20 @@ export function MintBlock({
           </button>
           {mintDisabledReason && (
             <div style={reasonTextStyle}>{mintDisabledReason}</div>
+          )}
+          {proofBinding === 'bearer' && bearerAcknowledged && (
+            <div style={{ ...reasonTextStyle, lineHeight: 1.4 }}>
+              This proof was made without a wallet, so it isn't tied to your
+              address — anyone who copies it from the transaction could mint it
+              too. Fine for a fun mint; if you'd rather it be yours alone,
+              re-solve with your wallet connected.
+            </div>
+          )}
+          {proofBinding === 'stale' && (
+            <div style={{ ...reasonTextStyle, lineHeight: 1.4 }}>
+              This proof is bound to a different wallet, so it can't be minted
+              from this one. Re-proving takes a moment.
+            </div>
           )}
           {!mockMode && isConnected && address && (
             <div style={{ ...reasonTextStyle, opacity: 0.85 }}>

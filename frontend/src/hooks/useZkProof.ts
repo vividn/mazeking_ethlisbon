@@ -1,7 +1,11 @@
 import { useState, useCallback } from 'react';
 import { useAccount } from 'wagmi';
 import type { MazeData, Position, Move } from '../types';
-import { serializeForZk, generateProverInput } from '../lib/zkSerialize';
+import {
+  serializeForZk,
+  generateProverInput,
+  UNBOUND_SENDER,
+} from '../lib/zkSerialize';
 import { computeMazeHash } from '../lib/mazeIdentity';
 import { serializeLayoutBytes } from '../lib/tokenId';
 import {
@@ -24,6 +28,16 @@ export interface ProofState {
   mazeHash?: `0x${string}`;
   /** Canonical layout bytes hashed to derive `mazeHash`. */
   layoutBytes?: Uint8Array;
+  /**
+   * Address this proof is bound to, or null for a "practice proof" generated
+   * without a connected wallet.
+   *
+   * null means the proof committed to `UNBOUND_SENDER`, so it can only be
+   * minted via the bearer path — and is copyable by anyone who sees it.
+   * A non-null value that differs from the currently connected account means
+   * the proof is stale (the user switched wallets) and must be regenerated.
+   */
+  boundTo?: `0x${string}` | null;
 }
 
 export interface UseZkProofOptions {
@@ -74,19 +88,6 @@ export function useZkProof(
   );
 
   const startProofGeneration = useCallback(async () => {
-    // The proof is bound to the minting account (third public input), so we
-    // cannot build one until a wallet is connected. Note this also means a
-    // proof generated under one account will not verify if the user switches
-    // accounts before minting — that is the protection working, not a bug.
-    if (!mockMode && !address) {
-      setState({
-        stage: 'error',
-        progress: 0,
-        error: 'Connect a wallet before proving — the proof is bound to the address that mints it.',
-      });
-      return;
-    }
-
     if (mockMode) {
       setState({ stage: 'loading-circuit', progress: 5 });
       await new Promise((r) => setTimeout(r, MOCK_DELAY_MS / 4));
@@ -136,11 +137,16 @@ export function useZkProof(
       const layoutBytes = serializeLayoutBytes(zkMaze);
       const mazeHash = await computeMazeHash(layoutBytes);
 
+      // With a wallet connected we bind the proof to it, so the mint is
+      // safe. Without one we still prove — against the unbound sentinel — so
+      // players can solve and see their proof before deciding to connect.
+      // Such a proof is mintable only through the opt-in bearer path.
+      const boundTo = address ?? null;
       const proverInput = generateProverInput(
         zkMaze,
         moves,
         mazeHash,
-        address as `0x${string}`
+        boundTo ?? UNBOUND_SENDER
       );
 
       const result = await generateProof(proverInput, handleProgress);
@@ -162,6 +168,7 @@ export function useZkProof(
         imageDataUrl,
         mazeHash,
         layoutBytes,
+        boundTo,
       });
     } catch (error) {
       console.error('Proof generation failed:', error);

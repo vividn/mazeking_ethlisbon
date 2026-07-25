@@ -120,27 +120,48 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     /// @param mazeHash   Pedersen hash of the canonical layout.
     /// @param layout     Canonical layout bytes (header + packed cells).
     /// @param moveCount  Number of moves taken (must match the proof).
+    /// @param bearer     Whether the proof was produced UNBOUND. See the
+    ///                   sender-binding note below; false is the safe default.
     function mintWithProof(
         bytes calldata proof,
         bytes32 mazeHash,
         bytes calldata layout,
-        uint16 moveCount
+        uint16 moveCount,
+        bool bearer
     ) external {
         require(verifierContract != address(0), "Verifier not set");
 
         // 1. Verify proof on-chain with public inputs =
         //    [mazeHash, moveCount, sender].
         //
-        //    Binding msg.sender is what stops a proof from being a bearer
-        //    credential. Proofs travel in public calldata; without this an
-        //    observer could lift one from the mempool, front-run the mint, and
-        //    take the token and its badges permanently. A proof is only valid
-        //    against the exact public inputs it was produced for, so a stolen
-        //    proof fails verification for anyone but its author.
+        //    The third input binds the proof to whoever may mint it. A proof
+        //    is only valid against the exact public inputs it was produced
+        //    for, which is the whole mechanism:
+        //
+        //      bearer == false  ->  publicInputs[2] = msg.sender.
+        //        The normal path. Proofs travel in public calldata, and this
+        //        is what stops an observer lifting one from the mempool and
+        //        front-running the mint. Only the prover can spend it.
+        //
+        //      bearer == true   ->  publicInputs[2] = 0.
+        //        Opt-in. Lets someone prove without a wallet connected (a
+        //        "practice proof") and still mint it later. Such a proof IS a
+        //        bearer credential — anyone who copies it can mint it — which
+        //        the UI warns about before use.
+        //
+        //    The two modes do not weaken each other. A bound proof commits to
+        //    an address, so it can never be replayed through the bearer path;
+        //    a bearer proof commits to zero, so it can never be replayed
+        //    through the bound path. The risk stays confined to proofs whose
+        //    author deliberately made them bearer.
+        //
+        //    NOTE: zero is safe as the unbound sentinel because no transaction
+        //    can originate from address(0), so the bearer branch can never be
+        //    reached accidentally by a normal caller in bound mode.
         bytes32[] memory publicInputs = new bytes32[](MazeConstants.PUBLIC_INPUTS_LENGTH);
         publicInputs[0] = mazeHash;
         publicInputs[1] = bytes32(uint256(moveCount));
-        publicInputs[2] = bytes32(uint256(uint160(msg.sender)));
+        publicInputs[2] = bearer ? bytes32(0) : bytes32(uint256(uint160(msg.sender)));
 
         IVerifier verifier = IVerifier(verifierContract);
         bool isValid = verifier.verify(proof, publicInputs);

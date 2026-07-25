@@ -170,7 +170,7 @@ contract MazeKingNFTTest is Test {
         bytes memory proof = hex"1234567890";
 
         vm.prank(user);
-        nft.mintWithProof(proof, mazeHash, layout, 100);
+        nft.mintWithProof(proof, mazeHash, layout, 100, false);
 
         uint256 expectedTokenId = uint256(mazeHash);
 
@@ -201,14 +201,14 @@ contract MazeKingNFTTest is Test {
 
         // Alice proved it, so Alice can mint it.
         vm.prank(alice);
-        nft.mintWithProof(proof, mazeHash, layout, 100);
+        nft.mintWithProof(proof, mazeHash, layout, 100, false);
         assertEq(nft.balanceOf(alice, uint256(mazeHash)), 1);
 
         // Bob replays the identical proof bytes. This is the attack, and it
         // must fail: the proof commits to Alice's address, not his.
         vm.prank(bob);
         vm.expectRevert("Invalid proof");
-        nft.mintWithProof(proof, mazeHash, layout, 100);
+        nft.mintWithProof(proof, mazeHash, layout, 100, false);
         assertEq(nft.balanceOf(bob, uint256(mazeHash)), 0);
     }
 
@@ -227,8 +227,68 @@ contract MazeKingNFTTest is Test {
         // Mint succeeds only if the contract passed exactly
         // [mazeHash, moveCount, msg.sender].
         vm.prank(user);
-        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
         assertEq(nft.balanceOf(user, uint256(mazeHash)), 1);
+    }
+
+    /// Opt-in bearer mode: a proof produced without a wallet (bound to the
+    /// zero sentinel) can be minted by whoever holds it. This is the
+    /// "practice proof" path — the user is knowingly accepting that it is
+    /// copyable, in exchange for being able to prove before connecting.
+    function test_MintWithProof_BearerProofMintsForAnyone() public {
+        address stranger = address(0xBEEF);
+
+        // Verifier that only accepts the unbound sentinel — i.e. a proof
+        // produced with sender = 0.
+        SenderBindingVerifier unbound = new SenderBindingVerifier(address(0));
+        vm.prank(owner);
+        nft.setVerifier(address(unbound));
+
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(stranger);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, true);
+        assertEq(nft.balanceOf(stranger, uint256(mazeHash)), 1);
+    }
+
+    /// The property that keeps the two modes from weakening each other: a
+    /// proof bound to an address cannot be laundered through the bearer path.
+    /// Without this, bearer mode would reopen the hole for *every* proof.
+    function test_MintWithProof_BoundProofCannotBeReplayedAsBearer() public {
+        address alice = address(0xA11CE);
+
+        SenderBindingVerifier boundToAlice = new SenderBindingVerifier(alice);
+        vm.prank(owner);
+        nft.setVerifier(address(boundToAlice));
+
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        // Alice's own bound mint works.
+        vm.prank(alice);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        // Same proof, submitted as bearer — publicInputs[2] becomes 0, which
+        // is not what Alice's proof committed to.
+        vm.prank(address(0xBEEF));
+        vm.expectRevert("Invalid proof");
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, true);
+    }
+
+    /// And the mirror: a bearer proof cannot be spent in bound mode, because
+    /// publicInputs[2] would carry the caller instead of the sentinel.
+    function test_MintWithProof_BearerProofCannotBeSpentAsBound() public {
+        SenderBindingVerifier unbound = new SenderBindingVerifier(address(0));
+        vm.prank(owner);
+        nft.setVerifier(address(unbound));
+
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        vm.expectRevert("Invalid proof");
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
     }
 
     function test_MintWithProof_InvalidProof() public {
@@ -240,7 +300,7 @@ contract MazeKingNFTTest is Test {
 
         vm.prank(user);
         vm.expectRevert("Invalid proof");
-        nft.mintWithProof(proof, mazeHash, layout, 100);
+        nft.mintWithProof(proof, mazeHash, layout, 100, false);
     }
 
     function test_MintWithProof_TwiceUpdatesBest() public {
@@ -249,7 +309,7 @@ contract MazeKingNFTTest is Test {
         bytes memory proof = hex"1234567890";
 
         vm.prank(user);
-        nft.mintWithProof(proof, mazeHash, layout, 100);
+        nft.mintWithProof(proof, mazeHash, layout, 100, false);
 
         uint256 tokenId = uint256(mazeHash);
 
@@ -258,7 +318,7 @@ contract MazeKingNFTTest is Test {
         assertEq(timesSolved1, 1);
 
         vm.prank(user);
-        nft.mintWithProof(proof, mazeHash, layout, 80);
+        nft.mintWithProof(proof, mazeHash, layout, 80, false);
 
         (uint16 minMoves2, uint16 timesSolved2,,) = nft.stats(tokenId, user);
         assertEq(minMoves2, 80);
@@ -266,7 +326,7 @@ contract MazeKingNFTTest is Test {
         assertEq(nft.balanceOf(user, tokenId), 1);
 
         vm.prank(user);
-        nft.mintWithProof(proof, mazeHash, layout, 90);
+        nft.mintWithProof(proof, mazeHash, layout, 90, false);
 
         (uint16 minMoves3, uint16 timesSolved3,,) = nft.stats(tokenId, user);
         assertEq(minMoves3, 80);
@@ -411,7 +471,7 @@ contract MazeKingNFTTest is Test {
         vm.stopPrank();
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 100);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges, nft.BADGE_REGISTERED());
@@ -429,7 +489,7 @@ contract MazeKingNFTTest is Test {
         vm.stopPrank();
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 100);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_ROBOT(), nft.BADGE_ROBOT());
@@ -451,7 +511,7 @@ contract MazeKingNFTTest is Test {
 
         // 104 < 105 (1.04x) -> GOLD
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 104);
+        nft.mintWithProof(hex"00", mazeHash, layout, 104, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_GOLD(), nft.BADGE_GOLD());
@@ -472,7 +532,7 @@ contract MazeKingNFTTest is Test {
 
         // 110 (1.10x) is in [1.05x, 1.15x) -> SILVER
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 110);
+        nft.mintWithProof(hex"00", mazeHash, layout, 110, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_SILVER(), nft.BADGE_SILVER());
@@ -493,7 +553,7 @@ contract MazeKingNFTTest is Test {
 
         // 120 (1.20x) is in [1.15x, 1.25x) -> COPPER
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 120);
+        nft.mintWithProof(hex"00", mazeHash, layout, 120, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_COPPER(), nft.BADGE_COPPER());
@@ -512,7 +572,7 @@ contract MazeKingNFTTest is Test {
         vm.stopPrank();
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 125);
+        nft.mintWithProof(hex"00", mazeHash, layout, 125, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_COPPER(), 0);
@@ -530,7 +590,7 @@ contract MazeKingNFTTest is Test {
         nft.setBadgeAwarder(address(awarder));
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, uint16(MazeConstants.MAX_MOVES));
+        nft.mintWithProof(hex"00", mazeHash, layout, uint16(MazeConstants.MAX_MOVES), false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges & nft.BADGE_STONE(), nft.BADGE_STONE());
@@ -548,19 +608,19 @@ contract MazeKingNFTTest is Test {
         vm.stopPrank();
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 110);
+        nft.mintWithProof(hex"00", mazeHash, layout, 110, false);
         (,, uint32 b1,) = nft.stats(tokenId, user);
         assertEq(b1, nft.BADGE_SILVER());
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 100);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
         (,, uint32 b2,) = nft.stats(tokenId, user);
         assertEq(b2, nft.BADGE_SILVER() | nft.BADGE_ROBOT());
 
         vm.prank(owner);
         nft.setRegistrarApproved(tokenId, true);
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 100);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
         (,, uint32 b3,) = nft.stats(tokenId, user);
         assertEq(b3, nft.BADGE_SILVER() | nft.BADGE_ROBOT() | nft.BADGE_REGISTERED());
     }
@@ -571,7 +631,7 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 100);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
 
         (,, uint32 badges,) = nft.stats(tokenId, user);
         assertEq(badges, 0);
@@ -611,7 +671,7 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 50);
+        nft.mintWithProof(hex"00", mazeHash, layout, 50, false);
 
         bytes memory stored = nft.layouts(tokenId);
         assertEq(stored.length, 28);
@@ -630,12 +690,12 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 50);
+        nft.mintWithProof(hex"00", mazeHash, layout, 50, false);
         bytes memory firstLayout = nft.layouts(tokenId);
 
         address user2 = address(0x2222);
         vm.prank(user2);
-        nft.mintWithProof(hex"00", mazeHash, layout, 60);
+        nft.mintWithProof(hex"00", mazeHash, layout, 60, false);
         bytes memory secondLayout = nft.layouts(tokenId);
 
         assertEq(firstLayout.length, secondLayout.length);
@@ -690,7 +750,7 @@ contract MazeKingNFTTest is Test {
 
         // Minter passes an empty layout; the pre-stored layout must survive.
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, "", 50);
+        nft.mintWithProof(hex"00", mazeHash, "", 50, false);
 
         assertEq(keccak256(nft.layouts(tokenId)), keccak256(layout));
 
@@ -705,7 +765,7 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 50);
+        nft.mintWithProof(hex"00", mazeHash, layout, 50, false);
 
         assertEq(nft.uri(tokenId), "https://api.mazeking.xyz/token/");
     }
@@ -721,7 +781,7 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 50);
+        nft.mintWithProof(hex"00", mazeHash, layout, 50, false);
 
         string memory tokenUri = nft.uri(tokenId);
         bytes memory uriBytes = bytes(tokenUri);
@@ -740,7 +800,7 @@ contract MazeKingNFTTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layout, 50);
+        nft.mintWithProof(hex"00", mazeHash, layout, 50, false);
         bytes memory storedLayout = nft.layouts(tokenId);
 
         string memory svg = rendererContract.renderSvg(tokenId, storedLayout);
