@@ -41,15 +41,19 @@ plain sight, which is false confidence and misleads the next maintainer. A
 variable states what is true: public by construction, protected by the
 provider's origin allowlist rather than by concealment.
 
-Two consequences of relying on an origin allowlist:
+Two notes on relying on an origin allowlist:
 
-- **A key restricted to the production domain will not work from localhost.**
-  Allowlist localhost as well, or keep a separate unrestricted key for
-  development — otherwise `pnpm dev` fails with silent RPC errors.
+- **The production key is domain-restricted and is not used locally.** Local
+  development supplies its own key through `frontend/.env` — copy
+  `frontend/.env.example` and fill it in with a personal Alchemy key. Leaving
+  it blank also works; the app falls back to public RPCs, which are adequate
+  for local use. Keeping the production endpoint narrow is the point of
+  restricting it.
 - **Origin allowlists are checked from browser-sent headers**, which
-  non-browser clients can spoof. They bound casual reuse, not determined abuse.
-  Pair the key with a compute-unit cap so a leak is bounded in cost rather than
-  in access.
+  non-browser clients can spoof, so they bound casual reuse rather than
+  determined abuse. On a free plan the provider's own quota already caps the
+  downside, which is a reasonable place to leave it; tighter controls are worth
+  revisiting only if the key is actually abused.
 
 Never use a key carrying billing exposure or write scope. This is true no
 matter how the bucket is configured.
