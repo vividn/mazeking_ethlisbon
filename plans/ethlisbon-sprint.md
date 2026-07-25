@@ -2,7 +2,70 @@
 
 **Window:** 2026-07-25 ~11:30 WEST → 2026-07-26 ~09:30 WEST (~22h)
 **Authors:** Nate (steward) · ístina (implementation)
-**Status:** living document — updated as decisions land
+**Status:** living document — see *Status* below for current state
+
+---
+
+## Status — 2026-07-26 ~00:40 WEST
+
+Sections 4 and 5 below describe the plan as written at the start of the sprint and are
+retained for context. Current state:
+
+**Achievements / badges — complete and verified on-chain.**
+The badge system existed but could never fire: `DefaultBadgeAwarder` gates every medal on
+`optimalMoves`, and nothing ever called `setOptimalMoves`. A registrar CLI now populates it,
+and badges are surfaced in the collection UI. Confirmed on Sepolia rather than locally — the
+same maze awarded `badges 0` before and `badges 3` (`REGISTERED | ROBOT`) after, from a real
+Honk proof through the deployed verifier:
+`0x82b9f755938cf0845d0efed01ee5c983307fbba489ad2010272fc2fff11eb8e9`
+
+**Sender-binding — landed, with an opt-in escape hatch.**
+`msg.sender` is a third public input, so a proof is no longer a replayable bearer credential.
+Verifier size was unchanged at 23,311 B (the public-input count is a bytecode constant, not
+something that unrolls), so no fallback design was needed. A `bearer` flag preserves
+wallet-less "practice proofs": they commit to the zero sentinel and are mintable only through
+the opt-in path, which cannot be used to launder a bound proof.
+
+**Testnet deployment — live and exercised.**
+Redeployed for the 3-public-input ABI; the previous deployment had no 5-arg `mintWithProof`
+and would have broken on merge.
+
+| | |
+|---|---|
+| NFT | `0x11352976b12ffe1c4baF9058B89BD763a2A10776` |
+| Verifier | `0x9365E391E2719fD144bFCd60eE895164dF91B80D` |
+| BadgeAwarder | `0x819C4D50806739Dee848F4Af5952b1cC34b8DF40` |
+| Renderer | `0xe376aB06415fB6D991B91C0bc24E96a16F2c68b0` |
+
+Three seeds are registered and badge-capable: `Zero Knowledge` (245), `SNARK` (115),
+`Merkle Tree` (92) — each verified by reading `officialMazes`, `optimalMoves`,
+`registrarApproved` and the stored layout back from chain.
+
+**Remaining, in dependency order:**
+
+1. Merge the open PRs: hosting pipeline, ENS records script, header wallet button, owner
+   enumeration.
+2. Redeploy after owner enumeration lands — it changes contract storage and adds functions,
+   so `mazesOf` and `deployBlock` require a fresh deployment to take effect.
+3. Production deployment to Polygon zkEVM. Precompiles are verified; cost measured at
+   ~0.0001 ETH for the full deploy, so funding is not a constraint. Needs a funded deployer
+   on that chain and an explorer API key for verification.
+4. ENS records. `mazeking.eth` is held by an EOA; the script is written and dry-run against
+   the live name, and needs a signature from the owning account.
+
+**Still open, and genuinely undecided:** the `<seed>.mazeking.eth` wildcard resolver. ENS
+resolution happens on Ethereum mainnet while the game will live on Polygon zkEVM, so an
+on-chain resolver cannot read the maze registry directly. That forces a choice between a
+CCIP-Read gateway (needs a host in the request path) and a small mainnet mirror of the seed
+registry. §6 records the design constraints either way.
+
+**Correction to §5.1's severity.** Finding A was graded HIGH on general bearer-credential
+reasoning. For this game specifically that overstated it: the maze layout is public and
+solving is polynomial, so an attacker wanting a robot crown can simply solve the maze rather
+than steal a proof — proofs are not scarce. Sender-binding still earns its place as the
+default, because it matters the moment anything scarce exists (paid mints, prizes,
+first-solver rewards), but opt-in bearer proofs are a reasonable product choice rather than a
+hole.
 
 ---
 
