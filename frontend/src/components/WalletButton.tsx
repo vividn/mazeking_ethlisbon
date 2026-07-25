@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAccount, useConnect, useDisconnect } from 'wagmi';
+import {
+  useAccount,
+  useChains,
+  useConnect,
+  useDisconnect,
+  useSwitchChain,
+} from 'wagmi';
 import type { ColorScheme } from '../types';
 import { useOwnedMazes } from '../hooks/useOwnedMazes';
 import { pickTextColor } from '../lib/contrastText';
@@ -23,9 +29,11 @@ interface WalletButtonProps {
  * "what we can see" rather than a definitive balance.
  */
 export function WalletButton({ colors }: WalletButtonProps) {
-  const { address, isConnected, connector } = useAccount();
+  const { address, isConnected, connector, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
+  const { switchChain, isPending: switching } = useSwitchChain();
+  const chains = useChains();
   const { mazes, loading } = useOwnedMazes();
 
   const [open, setOpen] = useState(false);
@@ -77,7 +85,7 @@ export function WalletButton({ colors }: WalletButtonProps) {
         data-testid="wallet-button"
         onClick={() => setOpen((v) => !v)}
         style={{ ...styles.pill, borderColor: fg, color: fg }}
-        title={`${address}\n${connector?.name ?? 'wallet'}`}
+        title={`${address}\n${connector?.name ?? 'wallet'}\n${chain?.name ?? 'unknown network'}`}
       >
         <span style={styles.addr}>{shortAddress(address)}</span>
         <span
@@ -109,7 +117,46 @@ export function WalletButton({ colors }: WalletButtonProps) {
               {connector?.name ?? 'wallet'} ·{' '}
               {loading ? 'counting mazes…' : `${count} maze NFTs`}
             </div>
+            <div style={styles.menuSub}>
+              network: {chain?.name ?? 'unrecognised'}
+            </div>
           </div>
+
+          {/* Chain switching. Wagmi only offers chains configured in
+              wagmi.ts, so this is also the only in-app route between Sepolia
+              and a local Anvil — previously impossible without editing wallet
+              settings by hand. */}
+          {chains.length > 1 && (
+            <div style={styles.chainSection}>
+              <div style={styles.sectionLabel}>Network</div>
+              {chains.map((c) => {
+                const active = c.id === chain?.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="menuitem"
+                    data-testid={`wallet-chain-${c.id}`}
+                    disabled={active || switching}
+                    onClick={() => {
+                      switchChain({ chainId: c.id });
+                      setOpen(false);
+                    }}
+                    style={{
+                      ...styles.menuItem,
+                      color: fg,
+                      opacity: active ? 0.55 : 1,
+                      cursor: active ? 'default' : 'pointer',
+                    }}
+                  >
+                    {active ? '● ' : '○ '}
+                    {c.name}
+                    {active ? ' (current)' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Switching accounts is a wallet-side action: re-running connect
               prompts the wallet's account picker. Wagmi has no generic
@@ -201,6 +248,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     opacity: 0.7,
     marginTop: '4px',
+  },
+  chainSection: {
+    borderTop: '1px solid rgba(128,128,128,0.35)',
+    borderBottom: '1px solid rgba(128,128,128,0.35)',
+    padding: '6px 0',
+    margin: '4px 0',
+  },
+  sectionLabel: {
+    fontSize: '10px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.08em',
+    opacity: 0.6,
+    padding: '2px 8px 4px',
   },
   menuItem: {
     display: 'block',
