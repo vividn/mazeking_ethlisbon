@@ -128,10 +128,19 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     ) external {
         require(verifierContract != address(0), "Verifier not set");
 
-        // 1. Verify proof on-chain with public inputs = [mazeHash, moveCount].
+        // 1. Verify proof on-chain with public inputs =
+        //    [mazeHash, moveCount, sender].
+        //
+        //    Binding msg.sender is what stops a proof from being a bearer
+        //    credential. Proofs travel in public calldata; without this an
+        //    observer could lift one from the mempool, front-run the mint, and
+        //    take the token and its badges permanently. A proof is only valid
+        //    against the exact public inputs it was produced for, so a stolen
+        //    proof fails verification for anyone but its author.
         bytes32[] memory publicInputs = new bytes32[](MazeConstants.PUBLIC_INPUTS_LENGTH);
         publicInputs[0] = mazeHash;
         publicInputs[1] = bytes32(uint256(moveCount));
+        publicInputs[2] = bytes32(uint256(uint160(msg.sender)));
 
         IVerifier verifier = IVerifier(verifierContract);
         bool isValid = verifier.verify(proof, publicInputs);

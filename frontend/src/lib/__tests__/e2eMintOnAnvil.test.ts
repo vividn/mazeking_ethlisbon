@@ -111,10 +111,19 @@ describe.runIf(RUN_MINT)(
       expect(path).not.toBeNull();
 
       // 1. Build prover input (same path as the frontend uses).
+      //    The account is derived first because the proof is bound to the
+      //    address that will submit the mint — proving for one address and
+      //    minting from another is exactly what the binding rejects.
+      const account = privateKeyToAccount(DEPLOYER_PRIVATE_KEY);
       const zk = serializeForZk(maze, startPos, robePos, scepterPos, goalPos);
       const layoutBytes = serializeLayoutBytes(zk);
       const mazeHash = await computeMazeHash(layoutBytes);
-      const proverInput = generateProverInput(zk, path!, mazeHash);
+      const proverInput = generateProverInput(
+        zk,
+        path!,
+        mazeHash,
+        account.address
+      );
 
       // 2. Witness + proof. `keccak: true` matches the deployed verifier
       //    (HonkVerifier with keccak transcript) — same flag the frontend
@@ -134,7 +143,6 @@ describe.runIf(RUN_MINT)(
       }
 
       // 3. Wire viem against anvil.
-      const account = privateKeyToAccount(DEPLOYER_PRIVATE_KEY);
       const transport = http(ANVIL_RPC);
       const publicClient = createPublicClient({ chain: foundry, transport });
       const walletClient = createWalletClient({

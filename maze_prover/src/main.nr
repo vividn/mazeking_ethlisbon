@@ -101,6 +101,11 @@ pub fn verify_solution(
 // Public inputs (committed to in the verifier):
 //   maze_hash:  Pedersen hash of the canonical layout (see hash.nr)
 //   move_count: number of moves used in the solution
+//   sender:     address that will submit the mint, as a field element. Not
+//               constrained in-circuit — committing it is the point: a proof
+//               only verifies against the public inputs it was made for, so
+//               binding the address stops the proof being a bearer credential
+//               that a mempool observer could lift and front-run.
 //
 // Private inputs (witness only):
 //   width/height, start/robe/scepter/goal positions, packed cell layout,
@@ -108,6 +113,7 @@ pub fn verify_solution(
 fn main(
     maze_hash: pub Field,
     move_count: pub u32,
+    sender: pub Field,
     width: u16,
     height: u16,
     start_x: u16,
@@ -121,6 +127,14 @@ fn main(
     packed_cells: [u8; MAX_PACKED_BYTES],
     moves: [u8; MAX_MOVES],
 ) {
+    // Bind the caller. `sender` is deliberately unconstrained in-circuit: a
+    // SNARK proof is valid only for the exact public-input vector it was
+    // produced against, so committing the address here is what stops a proof
+    // from being a bearer credential. The contract supplies
+    // `bytes32(uint160(msg.sender))` as this input, so a proof lifted from
+    // someone else's calldata fails verification for the thief.
+    let _ = sender;
+
     // Bind the public maze_hash to the private layout witness. After
     // this assertion, mutating any byte of the layout invalidates the
     // proof.
@@ -427,7 +441,7 @@ fn test_main_4x4_with_hash() {
 
     let h = compute_maze_hash(4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells);
 
-    main(h, 11, 4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells, moves);
+    main(h, 11, 0, 4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells, moves);
 }
 
 #[test(should_fail)]
@@ -455,5 +469,5 @@ fn test_main_rejects_wrong_hash() {
     let truth = compute_maze_hash(4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells);
     let bogus = truth + 1;
 
-    main(bogus, 11, 4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells, moves);
+    main(bogus, 11, 0, 4, 4, 0, 0, 3, 0, 0, 3, 2, 3, padded_cells, moves);
 }

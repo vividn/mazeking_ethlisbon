@@ -26,6 +26,47 @@ contract MockVerifier {
     }
 }
 
+/// @notice Verifier stub that models the one property a real SNARK verifier
+///         gives us: a proof is valid only against the exact public-input
+///         vector it was produced for. Accepts only when publicInputs[2]
+///         carries the address the proof was made for.
+contract SenderBindingVerifier {
+    address public provenFor;
+
+    constructor(address _provenFor) {
+        provenFor = _provenFor;
+    }
+
+    function verify(bytes calldata, bytes32[] calldata publicInputs) external view returns (bool) {
+        require(publicInputs.length == 3, "expected 3 public inputs");
+        return publicInputs[2] == bytes32(uint256(uint160(provenFor)));
+    }
+}
+
+/// @notice Asserts the exact public-input vector it is handed. The verifier
+///         interface is `view` (the NFT staticcalls it), so this cannot record
+///         to storage — it checks against expectations fixed at construction
+///         instead, and a successful mint is the proof that the wiring is right.
+contract ExpectingVerifier {
+    bytes32 public expectedMazeHash;
+    bytes32 public expectedMoveCount;
+    bytes32 public expectedSender;
+
+    constructor(bytes32 _mazeHash, bytes32 _moveCount, bytes32 _sender) {
+        expectedMazeHash = _mazeHash;
+        expectedMoveCount = _moveCount;
+        expectedSender = _sender;
+    }
+
+    function verify(bytes calldata, bytes32[] calldata publicInputs) external view returns (bool) {
+        require(publicInputs.length == 3, "expected 3 public inputs");
+        require(publicInputs[0] == expectedMazeHash, "publicInputs[0] != mazeHash");
+        require(publicInputs[1] == expectedMoveCount, "publicInputs[1] != moveCount");
+        require(publicInputs[2] == expectedSender, "publicInputs[2] != msg.sender");
+        return true;
+    }
+}
+
 contract MazeKingNFTTest is Test {
     MazeKingNFT public nft;
     MockVerifier public verifier;
@@ -141,6 +182,53 @@ contract MazeKingNFTTest is Test {
         assertEq(minMoves, 100);
         assertEq(timesSolved, 1);
         assertEq(badges, 0);
+    }
+
+    /// The regression this whole change exists for. Proofs ride in public
+    /// calldata; before sender-binding, an observer could copy one out of the
+    /// mempool and front-run the prover to steal the token and its badges.
+    function test_MintWithProof_StolenProofRevertsForThief() public {
+        address alice = address(0xA11CE);
+        address bob = address(0xB0B);
+
+        SenderBindingVerifier bindingVerifier = new SenderBindingVerifier(alice);
+        vm.prank(owner);
+        nft.setVerifier(address(bindingVerifier));
+
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        bytes memory proof = hex"1234567890";
+
+        // Alice proved it, so Alice can mint it.
+        vm.prank(alice);
+        nft.mintWithProof(proof, mazeHash, layout, 100);
+        assertEq(nft.balanceOf(alice, uint256(mazeHash)), 1);
+
+        // Bob replays the identical proof bytes. This is the attack, and it
+        // must fail: the proof commits to Alice's address, not his.
+        vm.prank(bob);
+        vm.expectRevert("Invalid proof");
+        nft.mintWithProof(proof, mazeHash, layout, 100);
+        assertEq(nft.balanceOf(bob, uint256(mazeHash)), 0);
+    }
+
+    /// Guards the wiring itself: the contract must hand the verifier three
+    /// public inputs, with the caller's address in slot 2.
+    function test_MintWithProof_ForwardsSenderAsThirdPublicInput() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        ExpectingVerifier expecting = new ExpectingVerifier(
+            mazeHash, bytes32(uint256(100)), bytes32(uint256(uint160(user)))
+        );
+        vm.prank(owner);
+        nft.setVerifier(address(expecting));
+
+        // Mint succeeds only if the contract passed exactly
+        // [mazeHash, moveCount, msg.sender].
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100);
+        assertEq(nft.balanceOf(user, uint256(mazeHash)), 1);
     }
 
     function test_MintWithProof_InvalidProof() public {

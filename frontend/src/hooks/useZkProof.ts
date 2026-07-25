@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useAccount } from 'wagmi';
 import type { MazeData, Position, Move } from '../types';
 import { serializeForZk, generateProverInput } from '../lib/zkSerialize';
 import { computeMazeHash } from '../lib/mazeIdentity';
@@ -59,6 +60,8 @@ export function useZkProof(
     progress: 0,
   });
 
+  const { address } = useAccount();
+
   const handleProgress: ProofProgressCallback = useCallback(
     (stage, progress) => {
       setState((prev) => ({
@@ -71,6 +74,19 @@ export function useZkProof(
   );
 
   const startProofGeneration = useCallback(async () => {
+    // The proof is bound to the minting account (third public input), so we
+    // cannot build one until a wallet is connected. Note this also means a
+    // proof generated under one account will not verify if the user switches
+    // accounts before minting — that is the protection working, not a bug.
+    if (!mockMode && !address) {
+      setState({
+        stage: 'error',
+        progress: 0,
+        error: 'Connect a wallet before proving — the proof is bound to the address that mints it.',
+      });
+      return;
+    }
+
     if (mockMode) {
       setState({ stage: 'loading-circuit', progress: 5 });
       await new Promise((r) => setTimeout(r, MOCK_DELAY_MS / 4));
@@ -120,7 +136,12 @@ export function useZkProof(
       const layoutBytes = serializeLayoutBytes(zkMaze);
       const mazeHash = await computeMazeHash(layoutBytes);
 
-      const proverInput = generateProverInput(zkMaze, moves, mazeHash);
+      const proverInput = generateProverInput(
+        zkMaze,
+        moves,
+        mazeHash,
+        address as `0x${string}`
+      );
 
       const result = await generateProof(proverInput, handleProgress);
 
@@ -160,6 +181,10 @@ export function useZkProof(
     scepterPos,
     goalPos,
     handleProgress,
+    // Must be a dependency: the proof is bound to this address, so a stale
+    // closure would silently prove against the previously-connected account
+    // and the mint would revert with "Invalid proof".
+    address,
   ]);
 
   const reset = useCallback(() => {

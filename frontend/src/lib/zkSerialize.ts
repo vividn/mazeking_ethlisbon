@@ -227,12 +227,19 @@ export type ProverInput = ProverInputCircuit;
  *                   first public input). Compute via `computeMazeHash()` in
  *                   `mazeIdentity.ts`; the circuit re-derives it from the
  *                   private witness and asserts equality.
+ * @param sender - Address that will submit the mint. Bound as the third public
+ *                 input so the proof is only valid for this account: proofs
+ *                 travel in public calldata, and without this binding anyone
+ *                 could lift one from the mempool and front-run the mint.
+ *                 Must equal `msg.sender` of the `mintWithProof` call or
+ *                 verification fails.
  * @returns ProverInput ready for Noir prover
  */
 export function generateProverInput(
   zkMaze: ZkMazeData,
   solutionMoves: Move[],
-  mazeHash: `0x${string}`
+  mazeHash: `0x${string}`,
+  sender: `0x${string}`
 ): ProverInput {
   // Validate dimensions
   const totalCells = zkMaze.width * zkMaze.height;
@@ -264,6 +271,10 @@ export function generateProverInput(
   return {
     maze_hash: mazeHash,
     move_count: solutionMoves.length,
+    // Address as a field element. The contract supplies the identical value
+    // via bytes32(uint256(uint160(msg.sender))); hex parsing is
+    // case-insensitive, so a checksummed address is fine here.
+    sender,
     width: zkMaze.width,
     height: zkMaze.height,
     start_x: zkMaze.startX,
