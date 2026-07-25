@@ -45,15 +45,21 @@ jobs:
         working-directory: frontend
         run: pnpm test:run
 
-      # NOTE: every VITE_* value is INLINED INTO THE BUNDLE and is therefore
-      # public. These are "secrets" only in the GitHub-storage sense — do not
-      # put anything here that must stay private. Use RPC keys that are
-      # domain-restricted or rate-limited, never ones with billing exposure.
+      # Every VITE_* value is INLINED INTO THE BUNDLE and is therefore public
+      # in the deployed site. VITE_ALCHEMY_KEY is read from `vars`, not
+      # `secrets`, because that is what it is: a value protected by Alchemy's
+      # origin allowlist rather than by concealment. Storing it as a secret
+      # would mask it in CI logs while it ships in plain sight, which is false
+      # confidence. Nothing that must stay private belongs in a VITE_* value.
+      #
+      # The per-chain URL overrides remain available for cases where a chain
+      # needs a different provider; they take precedence over the key.
       - name: Build
         working-directory: frontend
         env:
-          VITE_SEPOLIA_RPC_URL: ${{ secrets.VITE_SEPOLIA_RPC_URL }}
-          VITE_POLYGON_ZKEVM_RPC_URL: ${{ secrets.VITE_POLYGON_ZKEVM_RPC_URL }}
+          VITE_ALCHEMY_KEY: ${{ vars.VITE_ALCHEMY_KEY }}
+          VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
+          VITE_POLYGON_ZKEVM_RPC_URL: ${{ vars.VITE_POLYGON_ZKEVM_RPC_URL }}
         run: pnpm build
 
       - name: Configure Scaleway S3 credentials

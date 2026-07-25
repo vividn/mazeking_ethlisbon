@@ -31,13 +31,28 @@ without touching the deploy pipeline.
 ### The thing that actually needs care
 
 **Anything in a `VITE_*` variable is inlined into the bundle and is public.**
-Storing it as a GitHub secret keeps it out of the repo; it does *not* keep it
-out of the shipped JavaScript. Anyone can read
-`VITE_POLYGON_ZKEVM_RPC_URL` out of the deployed site.
+Storing it in CI keeps it out of the repository; it does *not* keep it out of
+the shipped JavaScript. Anyone can read `VITE_ALCHEMY_KEY` out of the deployed
+site. (Verifiable: build with a placeholder value and grep `dist/assets/*.js`.)
 
-So use an RPC key that is domain-restricted or rate-limited. Never one with
-billing exposure or write scope. This is true no matter how the bucket is
-configured.
+Because of that, RPC credentials here belong in a GitHub Actions **variable**,
+not a secret. A secret would be masked in CI logs while being published in
+plain sight, which is false confidence and misleads the next maintainer. A
+variable states what is true: public by construction, protected by the
+provider's origin allowlist rather than by concealment.
+
+Two consequences of relying on an origin allowlist:
+
+- **A key restricted to the production domain will not work from localhost.**
+  Allowlist localhost as well, or keep a separate unrestricted key for
+  development — otherwise `pnpm dev` fails with silent RPC errors.
+- **Origin allowlists are checked from browser-sent headers**, which
+  non-browser clients can spoof. They bound casual reuse, not determined abuse.
+  Pair the key with a compute-unit cap so a leak is bounded in cost rather than
+  in access.
+
+Never use a key carrying billing exposure or write scope. This is true no
+matter how the bucket is configured.
 
 ---
 
@@ -81,7 +96,7 @@ Set SSL/TLS mode to **Full**. Leave Cloudflare's default caching — the
 workflow already sets correct `Cache-Control` per object, and Cloudflare
 honours it.
 
-### 3. GitHub secrets
+### 3. GitHub secrets and variables
 
 | Secret | Required | Notes |
 |---|---|---|
@@ -89,8 +104,9 @@ honours it.
 | `SCW_SECRET_ACCESS_KEY` | yes | |
 | `SCW_BUCKET` | yes | bucket name only, no `s3://` |
 | `SCW_REGION` | no | defaults to `fr-par` |
-| `VITE_SEPOLIA_RPC_URL` | no | **public once built** |
-| `VITE_POLYGON_ZKEVM_RPC_URL` | no | **public once built** |
+| `VITE_ALCHEMY_KEY` | no | **variable, not secret** — public once built; covers every chain |
+| `VITE_SEPOLIA_RPC_URL` | no | variable; per-chain override, wins over the key |
+| `VITE_POLYGON_ZKEVM_RPC_URL` | no | variable; per-chain override, wins over the key |
 | `CLOUDFLARE_API_TOKEN` | no | enables automatic cache purge |
 | `CLOUDFLARE_ZONE_ID` | no | |
 
