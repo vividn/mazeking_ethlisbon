@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import type { ColorScheme } from '../types';
 import { Wordmark } from './Wordmark';
+import { WalletButton } from './WalletButton';
 import { pickTextColor } from '../lib/contrastText';
 
 interface PageHeaderProps {
@@ -44,6 +45,7 @@ export function PageHeader({ title, colors, current }: PageHeaderProps) {
       <h1 style={{ ...styles.pageTitle, color: fg }}>{title}</h1>
       <div style={styles.spacer} />
       <div style={styles.iconRow}>
+        <WalletButton colors={colors} />
         {current !== 'mazes' && isConnected && (
           <Link
             to="/mazes"
