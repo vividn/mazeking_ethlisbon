@@ -35,6 +35,17 @@ export interface OwnedMaze {
   layout: Uint8Array | null;
   /** Owner's best move count for this token; null when never solved. */
   minMoves: number | null;
+  /**
+   * Badge bitfield from `stats(tokenId, owner)` — see `lib/badges.ts`.
+   *
+   * Per-HOLDER, not per-token: two owners of the same maze can hold different
+   * badges, which is why badges cannot live in the ERC-1155 `uri(tokenId)`
+   * metadata (one URI is shared by every holder) and must be surfaced here.
+   *
+   * 0 is the normal state for a maze whose `optimalMoves` was never registered
+   * — the awarder gates every medal on it.
+   */
+  badges: number;
 }
 
 interface State {
@@ -223,10 +234,12 @@ export function useOwnedMazes(
           // is meaningless (defaults to 0); surface as null instead.
           const s = statsResults[i];
           let minMoves: number | null = null;
+          let badges = 0;
           if (s && s.status === 'success') {
             const tuple = s.result as readonly [bigint, bigint, bigint, bigint];
             const timesSolved = Number(tuple[1] ?? 0n);
             if (timesSolved > 0) minMoves = Number(tuple[0]);
+            badges = Number(tuple[2] ?? 0n);
           }
           const l = layoutResults[i];
           const layout =
@@ -238,6 +251,7 @@ export function useOwnedMazes(
             imageUrl: decodeImageFromTokenUri(tokenUri),
             layout,
             minMoves,
+            badges,
           };
         });
 
