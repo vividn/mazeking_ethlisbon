@@ -43,7 +43,7 @@ export const BADGE_DEFS: BadgeDef[] = [
     label: 'Robot Crown',
     glyph: '🤖👑',
     description:
-      'Solved in exactly the optimal number of moves. Nobody does this by hand — you almost certainly had a computer help, and we salute you for it.',
+      'Solved in exactly the optimal number of moves. Probably a robot',
   },
   {
     bit: BADGE_GOLD,
