@@ -102,7 +102,7 @@ pub fn verify_solution(
 //   maze_hash:  Pedersen hash of the canonical layout (see hash.nr)
 //   move_count: number of moves used in the solution
 //   sender:     address that will submit the mint, as a field element. Not
-//               constrained in-circuit — committing it is the point: a proof
+//               constrained in-circuit; committing it IS the point: a proof
 //               only verifies against the public inputs it was made for, so
 //               binding the address stops the proof being a bearer credential
 //               that a mempool observer could lift and front-run.
