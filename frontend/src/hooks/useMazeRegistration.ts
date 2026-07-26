@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useAccount, usePublicClient } from 'wagmi';
+import { useReadChain } from './useReadChain';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
-import { getContractAddress } from '../lib/contracts';
 import { fetchAttestation, type Attestation } from '../lib/attestation';
 
 /**
@@ -29,13 +28,10 @@ export function useMazeRegistration(
   mazeHash: `0x${string}` | null | undefined,
   seed?: string | null
 ) {
-  const { chain } = useAccount();
-  const publicClient = usePublicClient();
+  const { chain, publicClient, nft: nftAddress } = useReadChain();
   const [status, setStatus] = useState<RegistrationStatus>('unknown');
   const [attestation, setAttestation] = useState<Attestation | null>(null);
   const [optimalMoves, setOptimalMoves] = useState<number | null>(null);
-
-  const nftAddress = chain ? getContractAddress(chain.id, 'nft') : undefined;
 
   // Look up the on-chain state whenever the maze or the chain changes. A maze
   // registered on Sepolia is not registered on another chain, so this must not

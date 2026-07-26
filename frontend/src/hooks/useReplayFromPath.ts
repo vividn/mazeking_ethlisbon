@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useAccount, usePublicClient } from 'wagmi';
+import { useReadChain } from './useReadChain';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
-import { getContractAddress } from '../lib/contracts';
 import { tokenIdFromLocation } from '../lib/seedUrl';
 import type { ReplayPayload } from '../components/Game';
 
@@ -22,12 +21,10 @@ export function useReplayFromPath(
   pathname: string,
   alreadyLoaded: boolean
 ): ReplayPayload | null {
-  const { chain } = useAccount();
-  const publicClient = usePublicClient();
+  const { publicClient, nft } = useReadChain();
   const [replay, setReplay] = useState<ReplayPayload | null>(null);
 
   const tokenId = tokenIdFromLocation(pathname);
-  const nft = chain ? getContractAddress(chain.id, 'nft') : undefined;
 
   useEffect(() => {
     let cancelled = false;
