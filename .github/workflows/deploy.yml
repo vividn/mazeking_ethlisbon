@@ -87,7 +87,7 @@ jobs:
       # requiring either would reintroduce a permission the upload does not use.
       - name: Preflight — verify bucket is writable
         env:
-          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -uo pipefail
@@ -97,10 +97,18 @@ jobs:
           echo "NOTE: if the region above prints as ***, it is stored as a secret."
           echo "      It is not sensitive; storing it as a variable makes it readable here."
 
+          # The bucket must be the bare name ("mazeking"), not the endpoint URL
+          # Scaleway shows in its console ("https://mazeking.s3.fr-par.scw.cloud").
+          # A hostname passes S3's bucket-name regex, so the CLI accepts it and
+          # then reports AccessDenied for a bucket nobody owns — indistinguishable
+          # from a permissions problem unless it is checked for explicitly.
           case "$SCW_BUCKET" in
-            s3://*) echo "::error::SCW_BUCKET must be the bare bucket name, without the s3:// prefix." ; exit 1 ;;
-            *" "*)  echo "::error::SCW_BUCKET contains whitespace." ; exit 1 ;;
+            "")            echo "::error::Bucket name is empty. Expected a variable named SCW_BUCKET_NAME (or SCW_BUCKET) in the workflow_env environment." ; exit 1 ;;
+            *://*)         echo "::error::Bucket name looks like a URL ('${SCW_BUCKET}'). Use the bare name only, e.g. 'mazeking'." ; exit 1 ;;
+            *.scw.cloud|*.s3.*) echo "::error::Bucket name looks like an endpoint hostname ('${SCW_BUCKET}'). Use the bare name only — for https://mazeking.s3.fr-par.scw.cloud that is 'mazeking'." ; exit 1 ;;
+            *[[:space:]]*) echo "::error::Bucket name contains whitespace." ; exit 1 ;;
           esac
+          echo "bucket   : '${SCW_BUCKET}'"
 
           probe() {  # $1 = region -> 0 if the bucket is writable there
             aws s3 cp - "s3://${SCW_BUCKET}/.deploy-preflight" \
@@ -142,7 +150,7 @@ jobs:
       # grows inconveniently (see docs/DEPLOY-HOSTING.md).
       - name: Upload hashed assets (immutable)
         env:
-          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
@@ -165,7 +173,7 @@ jobs:
       # breaks proof generation at runtime while the page still loads fine.
       - name: Upload WebAssembly with explicit content type
         env:
-          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
@@ -184,7 +192,7 @@ jobs:
       # points browsers at asset hashes that may no longer be current.
       - name: Upload index.html (no-cache)
         env:
-          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
@@ -199,7 +207,7 @@ jobs:
       # error document makes the SPA resolve them client-side.
       - name: Publish SPA fallback (404 -> index.html)
         env:
-          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
