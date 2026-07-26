@@ -91,13 +91,34 @@ export async function signAttestation(seed: string, opts: AttestOptions) {
 }
 
 /**
+ * Cross-origin, because the page lives on its own domain and the function does
+ * not. Wide open on purpose: an attestation is a pure function of a public
+ * seed, so there is nothing here that a narrower origin list would protect.
+ * See docs/REGISTRAR.md.
+ */
+const HEADERS = {
+  'content-type': 'application/json',
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+};
+
+/**
  * Serverless entry point. Purely stateless: nothing here coordinates with any
  * other invocation, because there is nothing to coordinate.
  */
 export async function handle(event: {
-  queryStringParameters?: { seed?: string };
+  httpMethod?: string;
+  queryStringParameters?: {
+    seed?: string;
+    chainId?: string;
+    contract?: string;
+  };
   body?: string | { seed?: string };
 }) {
+  if (event?.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers: HEADERS, body: '' };
+  }
+
   const fromBody =
     typeof event?.body === 'string'
       ? (JSON.parse(event.body) as { seed?: string }).seed
@@ -107,19 +128,48 @@ export async function handle(event: {
   if (!seed || typeof seed !== 'string') {
     return {
       statusCode: 400,
+      headers: HEADERS,
       body: JSON.stringify({ error: 'seed is required' }),
+    };
+  }
+
+  const chainId = process.env.CHAIN_ID as string;
+  const verifyingContract = process.env.NFT_ADDRESS as string;
+
+  // The caller says which deployment it wants a signature for. We do not take
+  // its word for it: signing against a caller-supplied domain would let anyone
+  // obtain attestations valid on *other* MazeKing deployments this key happens
+  // to hold the registrar role on. The function signs for the deployment it was
+  // configured with, and a mismatch is refused rather than silently answered
+  // with a signature the caller cannot use.
+  const wantChain = event?.queryStringParameters?.chainId;
+  const wantContract = event?.queryStringParameters?.contract;
+  const mismatch =
+    (wantChain && wantChain !== String(chainId)) ||
+    (wantContract &&
+      wantContract.toLowerCase() !== String(verifyingContract).toLowerCase());
+
+  if (mismatch) {
+    return {
+      statusCode: 409,
+      headers: HEADERS,
+      body: JSON.stringify({
+        error: 'this attestor signs for a different deployment',
+        chainId,
+        contract: verifyingContract,
+      }),
     };
   }
 
   try {
     const result = await signAttestation(seed, {
-      chainId: process.env.CHAIN_ID as string,
-      verifyingContract: process.env.NFT_ADDRESS as string,
+      chainId,
+      verifyingContract,
       privateKey: process.env.REGISTRAR_PRIVATE_KEY as Hex,
     });
     return {
       statusCode: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: HEADERS,
       body: JSON.stringify(result),
     };
   } catch (err) {
@@ -127,6 +177,7 @@ export async function handle(event: {
     // deriveMaze refuses to attest a maze nobody could ever mint.
     return {
       statusCode: 422,
+      headers: HEADERS,
       body: JSON.stringify({
         error: err instanceof Error ? err.message : String(err),
       }),

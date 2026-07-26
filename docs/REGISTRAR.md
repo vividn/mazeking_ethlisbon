@@ -64,7 +64,7 @@ action worth hoarding.
 What the endpoint does spend is **compute**: every request runs maze generation
 and a BFS. Rate-limit it for cost, not for safety.
 
-## Deploying
+## Building the deployment package
 
 The handler is `frontend/scripts/attest-maze.ts`, which exports:
 
@@ -72,7 +72,57 @@ The handler is `frontend/scripts/attest-maze.ts`, which exports:
 - `handle(event)` — a function-style entry point taking `?seed=`;
 - a CLI, when invoked with `--seed`.
 
-Environment:
+It cannot be uploaded as-is. It is TypeScript, and it imports the game's own
+generator, serializer and solver out of `src/lib` — which is the whole point,
+since a registrar that derived mazes differently from the game would be worse
+than no registrar, but it means a platform handed these files sees `.ts` and
+relative imports it cannot resolve.
+
+```sh
+cd frontend
+pnpm build:attestor
+```
+
+That writes `frontend/dist-attestor/`:
+
+- `handler.mjs` — the entire import graph compiled into one ES module;
+- `package.json` — declaring `viem` and `@aztec/bb.js`.
+
+Dependencies stay external rather than being inlined. `@aztec/bb.js` carries a
+WebAssembly module for the Pedersen hash that gives a maze its identity, and
+inlining a package whose real payload is a `.wasm` asset is a good way to get a
+bundle that builds cleanly and fails at runtime. Upload the directory and let
+the platform install them.
+
+Sanity-check the built artifact before uploading it — it should produce the
+same maze hash as the CLI does:
+
+```sh
+cd frontend/dist-attestor
+REGISTRAR_PRIVATE_KEY=0x... CHAIN_ID=11155111 NFT_ADDRESS=0x... \
+  node --input-type=module -e "
+    const { handle } = await import('./handler.mjs');
+    console.log((await handle({queryStringParameters:{seed:'Zero Knowledge'}})).body);
+  "
+```
+
+## Scaleway permissions
+
+The application deploying this needs two permission sets, both scoped to the
+project the function lives in:
+
+- **`FunctionsFullAccess`** — namespace, deploy, environment variables and
+  secrets.
+- **`ContainerRegistryFullAccess`** — Scaleway builds the function into an
+  image and pushes it to Container Registry, and namespace creation pulls from
+  there. Without it the deploy fails during the build step, which reads like a
+  broken build rather than a permissions problem.
+
+`REGISTRAR_PRIVATE_KEY` belongs in the function's **secret** environment
+variables, which the Functions API covers — no Secret Manager permission
+needed.
+
+## Environment
 
 | Variable | Meaning |
 | --- | --- |
@@ -83,6 +133,18 @@ Environment:
 Because the domain binds both `chainId` and `verifyingContract`, a signature
 made for one deployment is meaningless on another. A Sepolia attestation cannot
 be replayed onto mainnet. Deploy one function instance per chain.
+
+The client passes the chain and contract it wants a signature for, and the
+function **refuses with 409 rather than obliging**. Signing against a
+caller-supplied domain would let anyone obtain attestations valid on other
+MazeKing deployments this key happens to hold the registrar role on. The
+function signs only for the deployment it was configured with; the parameters
+exist so a client pointed at the wrong instance gets a clear answer instead of
+a signature that silently fails on chain.
+
+Responses carry `Access-Control-Allow-Origin: *`. That is deliberate rather
+than lazy: as above, the response contains nothing a narrower origin list would
+protect.
 
 Grant the role once, from the contract owner:
 
