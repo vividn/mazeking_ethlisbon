@@ -207,6 +207,12 @@ contract MazeRendererTest is Test {
     // Golden SVG tests (≥3 fixtures, full SVG locked)
     // -----------------------------------------------------------------
 
+    /// @dev An empty signature means "no attestation": registration is opt-in
+    ///      and skipping it must leave minting exactly as it was.
+    function _noAttestation() internal pure returns (MazeKingNFT.MazeAttestation memory) {
+        return MazeKingNFT.MazeAttestation({ seed: "", optimalMoves: 0, signature: "" });
+    }
+
     function test_GoldenSvg_Minimal2x2() public view {
         string memory svg = renderer.renderSvg(1, _fixtureMinimal());
         // 2x2, no walls, no non-Normal cells. tokenId=1 -> baseHue=1.
@@ -585,7 +591,7 @@ contract MazeRendererTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layoutB, 50, false, 0, "");
+        nft.mintWithProof(hex"00", mazeHash, layoutB, 50, false, _noAttestation());
 
         // Mint succeeded.
         assertEq(nft.balanceOf(user, tokenId), 1, "mint should succeed despite mismatch");

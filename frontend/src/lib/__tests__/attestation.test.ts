@@ -40,7 +40,8 @@ describe.runIf(RUN)('registrar attestation', () => {
   it('produces a digest the contract agrees with, recovering the signer', async () => {
     const client = createPublicClient({ chain: foundry, transport: http(RPC) });
 
-    const attested = await signAttestation('Zero Knowledge', {
+    const SEED = 'Zero Knowledge';
+    const attested = await signAttestation(SEED, {
       chainId: 31337,
       verifyingContract: nft,
       privateKey: REGISTRAR_KEY,
@@ -51,7 +52,7 @@ describe.runIf(RUN)('registrar attestation', () => {
       address: nft,
       abi: MazeKingNFTAbi,
       functionName: 'attestationDigest',
-      args: [attested.mazeHash, keccak256(attested.layout), attested.optimalMoves],
+      args: [SEED, attested.mazeHash, keccak256(attested.layout), attested.optimalMoves],
     })) as Hex;
 
     // Recovering locally against that digest must return the signing account:
