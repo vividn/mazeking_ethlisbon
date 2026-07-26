@@ -134,15 +134,38 @@ policy is applied.
 
 ### 2. Cloudflare
 
-Point a proxied (orange-cloud) `CNAME` at the bucket's website endpoint:
+Scaleway resolves the bucket from the **Host header** (virtual-hosted-style
+addressing). A proxied CNAME sends the visitor's hostname, so a request for
+`example.com` makes Scaleway look for a bucket named `example.com` — and
+returns `NoSuchBucket` if the bucket is named anything else. This is the most
+likely first failure when attaching a custom domain, and it is not a DNS or
+permissions problem despite looking like one.
+
+Two ways to resolve it.
+
+**Option A — override the Host header at Cloudflare (no bucket changes).**
+Point a proxied `CNAME` at the bucket's *website* endpoint:
 
 ```
-mazeking.example  CNAME  YOUR-BUCKET.s3-website.fr-par.scw.cloud   [proxied]
+example.com  CNAME  YOUR-BUCKET.s3-website.fr-par.scw.cloud   [proxied]
 ```
 
-Set SSL/TLS mode to **Full**. Leave Cloudflare's default caching — the
-workflow already sets correct `Cache-Control` per object, and Cloudflare
-honours it.
+then add **Rules → Origin Rules → Host Header** rewriting the origin Host to
+`YOUR-BUCKET.s3-website.fr-par.scw.cloud`. Scaleway then sees the bucket's own
+name and serves normally. Nothing about the bucket, its policy, or CI changes.
+
+**Option B — name the bucket after the domain.** Scaleway's documented path:
+create the bucket as the FQDN (`example.com`), so the Host header already
+matches. Requires recreating the bucket, reapplying the policy, and updating
+`SCW_BUCKET_NAME`.
+
+Use the **website** endpoint (`s3-website`), not the object endpoint (`s3`).
+Only the website endpoint serves the index document at `/` and uses the error
+document; the object endpoint returns the bucket listing, or `403` when
+listing is not public.
+
+Set SSL/TLS mode to **Full**. Leave Cloudflare's default caching — the workflow
+sets correct `Cache-Control` per object and Cloudflare honours it.
 
 ### 3. GitHub secrets and variables
 
