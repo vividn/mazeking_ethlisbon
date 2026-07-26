@@ -77,6 +77,25 @@ jobs:
           hint="set it in the 'workflow_env' environment, and confirm this job still declares environment: workflow_env"
           : "${SCW_ACCESS_KEY_ID:?empty — $hint}"
           : "${SCW_SECRET_ACCESS_KEY:?empty — $hint}"
+
+          # Shape check, not a value dump. A 403 from Object Storage with a
+          # correct bucket, region and project usually means the credential
+          # itself is malformed — most often a newline picked up when pasting,
+          # or the access key and secret key entered the wrong way round.
+          # Scaleway access keys are 20 chars beginning "SCW"; secret keys are
+          # 36-char UUIDs. Lengths and prefixes are enough to tell.
+          echo "access key : ${#SCW_ACCESS_KEY_ID} chars, starts '$(printf %.3s "$SCW_ACCESS_KEY_ID")' (expect 20, 'SCW')"
+          echo "secret key : ${#SCW_SECRET_ACCESS_KEY} chars (expect 36, UUID form)"
+          case "$SCW_ACCESS_KEY_ID" in
+            *[[:space:]]*) echo "::error::SCW_ACCESS_KEY_ID contains whitespace — most likely a trailing newline from pasting. Re-enter it without one." ; exit 1 ;;
+          esac
+          case "$SCW_SECRET_ACCESS_KEY" in
+            *[[:space:]]*) echo "::error::SCW_SECRET_ACCESS_KEY contains whitespace — most likely a trailing newline from pasting. Re-enter it without one." ; exit 1 ;;
+          esac
+          case "$SCW_ACCESS_KEY_ID" in
+            SCW*) : ;;
+            *) echo "::warning::Access key does not begin with 'SCW'. If it looks like a UUID, the access key and secret key are swapped." ;;
+          esac
           aws configure set aws_access_key_id     "$SCW_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$SCW_SECRET_ACCESS_KEY"
           aws configure set default.region        "${SCW_REGION:-fr-par}"
