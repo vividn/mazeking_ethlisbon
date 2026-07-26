@@ -71,34 +71,107 @@ Create a bucket in Scaleway Object Storage (e.g. region `fr-par`) and enable
 - **error document:** `index.html` (or `404.html`, which the workflow also
   uploads — see *SPA routing* below)
 
-Grant anonymous read. A minimal bucket policy:
+Grant anonymous read with a bucket policy.
+
+**The trap worth knowing before you apply one.** On Scaleway a bucket policy is
+*authoritative*: once set, access is decided by the policy and IAM permissions
+no longer grant it. The console's suggested policy contains an "Allow owner"
+statement naming a **user**:
+
+```json
+"Principal": { "SCW": "user_id:<your-user-uuid>" }
+```
+
+That grants the person clicking in the console. A CI deploy normally uses an
+**application** API key, which is a different principal — so the policy looks
+complete, the key carries `ObjectStorageFullAccess`, and every request still
+returns `403`.
+
+The symptom is distinctive: `list-buckets` keeps working, because it is an
+account-level operation the bucket policy does not govern, while `head-bucket`
+and every write are Forbidden. That combination means a bucket policy is
+excluding the caller — not a bad credential, wrong region, or wrong project.
+
+A working policy names **both** principals plus the public:
 
 ```json
 {
-  "Version": "2012-10-17",
+  "Version": "2023-04-17",
+  "Id": "mazeking-static-site",
   "Statement": [
     {
-      "Sid": "PublicRead",
+      "Sid": "Allow owner",
+      "Effect": "Allow",
+      "Principal": { "SCW": "user_id:YOUR-USER-UUID" },
+      "Action": "*",
+      "Resource": ["YOUR-BUCKET", "YOUR-BUCKET/*"]
+    },
+    {
+      "Sid": "Allow deployer application",
+      "Effect": "Allow",
+      "Principal": { "SCW": "application_id:YOUR-APPLICATION-UUID" },
+      "Action": "*",
+      "Resource": ["YOUR-BUCKET", "YOUR-BUCKET/*"]
+    },
+    {
+      "Sid": "Delegate access",
       "Effect": "Allow",
       "Principal": "*",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::YOUR-BUCKET/*"
+      "Resource": "YOUR-BUCKET/*"
     }
   ]
 }
 ```
 
+The application UUID is in **IAM → Applications**; the API key's detail page
+also shows which principal owns it. Note the Scaleway shape: resources are bare
+bucket names, not ARNs.
+
+**Enabling bucket website rewrites the bucket policy.** Scaleway applies its own
+default policy when website hosting is switched on, silently discarding any
+statement added beforehand — including the one granting the deploying
+application. Configure the website *first*, then apply the policy, and re-check
+the policy after any later change to website settings.
+
+**To unblock immediately**, deleting the bucket policy restores IAM-based
+access — at the cost of the site not being publicly readable until a corrected
+policy is applied.
+
 ### 2. Cloudflare
 
-Point a proxied (orange-cloud) `CNAME` at the bucket's website endpoint:
+Scaleway resolves the bucket from the **Host header** (virtual-hosted-style
+addressing). A proxied CNAME sends the visitor's hostname, so a request for
+`example.com` makes Scaleway look for a bucket named `example.com` — and
+returns `NoSuchBucket` if the bucket is named anything else. This is the most
+likely first failure when attaching a custom domain, and it is not a DNS or
+permissions problem despite looking like one.
+
+Two ways to resolve it.
+
+**Option A — override the Host header at Cloudflare (no bucket changes).**
+Point a proxied `CNAME` at the bucket's *website* endpoint:
 
 ```
-mazeking.example  CNAME  YOUR-BUCKET.s3-website.fr-par.scw.cloud   [proxied]
+example.com  CNAME  YOUR-BUCKET.s3-website.fr-par.scw.cloud   [proxied]
 ```
 
-Set SSL/TLS mode to **Full**. Leave Cloudflare's default caching — the
-workflow already sets correct `Cache-Control` per object, and Cloudflare
-honours it.
+then add **Rules → Origin Rules → Host Header** rewriting the origin Host to
+`YOUR-BUCKET.s3-website.fr-par.scw.cloud`. Scaleway then sees the bucket's own
+name and serves normally. Nothing about the bucket, its policy, or CI changes.
+
+**Option B — name the bucket after the domain.** Scaleway's documented path:
+create the bucket as the FQDN (`example.com`), so the Host header already
+matches. Requires recreating the bucket, reapplying the policy, and updating
+`SCW_BUCKET_NAME`.
+
+Use the **website** endpoint (`s3-website`), not the object endpoint (`s3`).
+Only the website endpoint serves the index document at `/` and uses the error
+document; the object endpoint returns the bucket listing, or `403` when
+listing is not public.
+
+Set SSL/TLS mode to **Full**. Leave Cloudflare's default caching — the workflow
+sets correct `Cache-Control` per object and Cloudflare honours it.
 
 ### 3. GitHub secrets and variables
 
@@ -153,14 +226,36 @@ older build. Upload order matters for the same reason: assets first,
 `index.html` last, so the entry point never references files that aren't there
 yet.
 
-**No `--delete`.** Old hashed assets are left in place so that any client still
-holding a cached `index.html` keeps working. They are small and harmless. To
-prune when it eventually matters:
+**Uploads use `cp --recursive`, not `sync`.** `sync` lists the destination to
+compute a diff, which requires `s3:ListBucket`. Nothing here benefits from that
+— assets are content-hashed, so every build writes new filenames and no
+comparison is ever meaningful. Using `cp` means the deploy credential needs only
+**`PutObject`**, which is the narrowest useful permission and removes a whole
+class of `AccessDenied` failures.
+
+Old hashed assets accumulate rather than being deleted, which also keeps any
+client holding a cached `index.html` working. They are small. To prune when it
+eventually matters — note this *does* need `ListBucket`:
 
 ```bash
 aws s3 sync frontend/dist s3://$SCW_BUCKET \
   --endpoint-url https://s3.fr-par.scw.cloud --delete
 ```
+
+### If the deploy reports `AccessDenied`
+
+Scaleway returns `AccessDenied` for a bucket in another **region** and for one in
+another **project**, not just for a missing permission — so the message alone
+cannot distinguish them. Check, in order:
+
+1. the bucket's region matches `SCW_REGION` (the endpoint is
+   `https://s3.<region>.scw.cloud`, defaulting to `fr-par`);
+2. the API key was created in the **same Scaleway project** as the bucket, since
+   keys are project-scoped;
+3. the key has ObjectStorage **write** access.
+
+The preflight step tests writability directly and prints `head-bucket` and
+`list-objects` output only when that fails, so the run names the cause itself.
 
 ---
 
