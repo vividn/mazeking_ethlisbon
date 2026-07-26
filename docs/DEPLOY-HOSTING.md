@@ -153,14 +153,36 @@ older build. Upload order matters for the same reason: assets first,
 `index.html` last, so the entry point never references files that aren't there
 yet.
 
-**No `--delete`.** Old hashed assets are left in place so that any client still
-holding a cached `index.html` keeps working. They are small and harmless. To
-prune when it eventually matters:
+**Uploads use `cp --recursive`, not `sync`.** `sync` lists the destination to
+compute a diff, which requires `s3:ListBucket`. Nothing here benefits from that
+— assets are content-hashed, so every build writes new filenames and no
+comparison is ever meaningful. Using `cp` means the deploy credential needs only
+**`PutObject`**, which is the narrowest useful permission and removes a whole
+class of `AccessDenied` failures.
+
+Old hashed assets accumulate rather than being deleted, which also keeps any
+client holding a cached `index.html` working. They are small. To prune when it
+eventually matters — note this *does* need `ListBucket`:
 
 ```bash
 aws s3 sync frontend/dist s3://$SCW_BUCKET \
   --endpoint-url https://s3.fr-par.scw.cloud --delete
 ```
+
+### If the deploy reports `AccessDenied`
+
+Scaleway returns `AccessDenied` for a bucket in another **region** and for one in
+another **project**, not just for a missing permission — so the message alone
+cannot distinguish them. Check, in order:
+
+1. the bucket's region matches `SCW_REGION` (the endpoint is
+   `https://s3.<region>.scw.cloud`, defaulting to `fr-par`);
+2. the API key was created in the **same Scaleway project** as the bucket, since
+   keys are project-scoped;
+3. the key has ObjectStorage **write** access.
+
+The preflight step tests writability directly and prints `head-bucket` and
+`list-objects` output only when that fails, so the run names the cause itself.
 
 ---
 
