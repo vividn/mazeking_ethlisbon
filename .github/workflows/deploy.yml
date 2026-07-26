@@ -1,0 +1,179 @@
+name: Deploy
+
+# Merging to main deploys the frontend to Scaleway Object Storage, fronted by
+# Cloudflare. See docs/DEPLOY-HOSTING.md for the one-time bucket + DNS setup
+# and the full list of required secrets.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never let two deploys race the bucket. Cancelling an in-flight deploy is
+# safe here because each run uploads a complete, self-consistent set of
+# assets before it touches index.html.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: '9'
+  NODE_VERSION: '20'
+
+jobs:
+  deploy:
+    name: build + publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Cheap gate (~10s) so a red suite can't reach production. The heavier
+      # proof/contract tiers already ran on the PR.
+      - name: vitest run
+        working-directory: frontend
+        run: pnpm test:run
+
+      # Every VITE_* value is INLINED INTO THE BUNDLE and is therefore public
+      # in the deployed site. VITE_ALCHEMY_KEY is read from `vars`, not
+      # `secrets`, because that is what it is: a value protected by Alchemy's
+      # origin allowlist rather than by concealment. Storing it as a secret
+      # would mask it in CI logs while it ships in plain sight, which is false
+      # confidence. Nothing that must stay private belongs in a VITE_* value.
+      #
+      # The per-chain URL overrides remain available for cases where a chain
+      # needs a different provider; they take precedence over the key.
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_ALCHEMY_KEY: ${{ vars.VITE_ALCHEMY_KEY }}
+          VITE_SEPOLIA_RPC_URL: ${{ vars.VITE_SEPOLIA_RPC_URL }}
+          VITE_POLYGON_ZKEVM_RPC_URL: ${{ vars.VITE_POLYGON_ZKEVM_RPC_URL }}
+        run: pnpm build
+
+      - name: Configure Scaleway S3 credentials
+        env:
+          SCW_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY_ID }}
+          SCW_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -euo pipefail
+          : "${SCW_ACCESS_KEY_ID:?missing secret SCW_ACCESS_KEY_ID}"
+          : "${SCW_SECRET_ACCESS_KEY:?missing secret SCW_SECRET_ACCESS_KEY}"
+          aws configure set aws_access_key_id     "$SCW_ACCESS_KEY_ID"
+          aws configure set aws_secret_access_key "$SCW_SECRET_ACCESS_KEY"
+          aws configure set default.region        "${SCW_REGION:-fr-par}"
+
+      # Upload order is deliberate: assets first, index.html last. index.html
+      # names hashed asset files, so publishing it before its assets exist
+      # would serve a broken page for the length of the upload.
+      #
+      # No --delete: old hashed assets are harmless and keep any client
+      # holding a cached index.html working. Prune manually if the bucket ever
+      # grows inconveniently (see docs/DEPLOY-HOSTING.md).
+      - name: Upload hashed assets (immutable)
+        env:
+          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -euo pipefail
+          : "${SCW_BUCKET:?missing secret SCW_BUCKET}"
+          ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
+          aws s3 sync frontend/dist "s3://${SCW_BUCKET}" \
+            --endpoint-url "$ENDPOINT" \
+            --exclude "index.html" \
+            --exclude "*.wasm" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      # .wasm needs an explicit content type. Browsers reject
+      # WebAssembly.instantiateStreaming on anything but application/wasm, and
+      # the CLI's extension guessing cannot be relied on — a wrong type here
+      # breaks proof generation at runtime while the page still loads fine.
+      - name: Upload WebAssembly with explicit content type
+        env:
+          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
+          find frontend/dist -name '*.wasm' -print0 | while IFS= read -r -d '' f; do
+            key="${f#frontend/dist/}"
+            echo "wasm -> $key"
+            aws s3 cp "$f" "s3://${SCW_BUCKET}/${key}" \
+              --endpoint-url "$ENDPOINT" \
+              --content-type "application/wasm" \
+              --cache-control "public, max-age=31536000, immutable"
+          done
+
+      # index.html must never be cached at the edge for long: it is the only
+      # file that changes name-for-name between deploys, and a stale copy
+      # points browsers at asset hashes that may no longer be current.
+      - name: Upload index.html (no-cache)
+        env:
+          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
+          aws s3 cp frontend/dist/index.html "s3://${SCW_BUCKET}/index.html" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "text/html; charset=utf-8" \
+            --cache-control "no-cache, must-revalidate"
+
+      # The app uses BrowserRouter, so deep links (/gallery, /my-mazes) are
+      # served by the bucket as missing keys. Publishing index.html as the
+      # error document makes the SPA resolve them client-side.
+      - name: Publish SPA fallback (404 -> index.html)
+        env:
+          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
+          aws s3 cp frontend/dist/index.html "s3://${SCW_BUCKET}/404.html" \
+            --endpoint-url "$ENDPOINT" \
+            --content-type "text/html; charset=utf-8" \
+            --cache-control "no-cache, must-revalidate"
+
+      # Optional. Skipped cleanly when the secrets are absent, so the deploy
+      # works before Cloudflare is wired up.
+      # The skip is done in-script rather than with `if: secrets.X != ''`,
+      # because the `secrets` context is not dependably available in step
+      # conditions — a silently-always-false condition would leave a stale
+      # edge cache with no visible failure.
+      - name: Purge Cloudflare cache
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ZONE_ID:-}" ]; then
+            echo "Cloudflare secrets not set — skipping purge."
+            echo "index.html is uploaded no-cache, so a fresh visit still gets the new build."
+            exit 0
+          fi
+          curl -sS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}' | tee /dev/stderr | grep -q '"success":true'
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed"
+            echo ""
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- bundle: $(du -sh frontend/dist | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
