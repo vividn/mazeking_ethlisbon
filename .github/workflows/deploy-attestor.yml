@@ -91,6 +91,8 @@ jobs:
           REGISTRAR_PRIVATE_KEY: ${{ secrets.REGISTRAR_PRIVATE_KEY }}
           NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
           CHAIN_ID: ${{ vars.CHAIN_ID }}
+          SCW_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
+          SCW_ORGANIZATION_ID: ${{ vars.SCW_ORGANIZATION_ID }}
         run: |
           # Report every missing value at once. Failing on the first one turns a
           # single fix into several round trips through a 3-minute workflow.
@@ -99,6 +101,11 @@ jobs:
           [ -n "$REGISTRAR_PRIVATE_KEY" ] || missing="$missing REGISTRAR_PRIVATE_KEY(secret)"
           [ -n "$NFT_ADDRESS" ] || missing="$missing NFT_ADDRESS(var)"
           [ -n "$CHAIN_ID" ] || missing="$missing CHAIN_ID(var)"
+          # The Scaleway CLI needs both, and reports a missing organization id
+          # three steps later as "default organization ID cannot be empty" --
+          # an SDK message that names neither the variable nor the workflow.
+          [ -n "$SCW_PROJECT_ID" ] || missing="$missing SCW_PROJECT_ID(var)"
+          [ -n "$SCW_ORGANIZATION_ID" ] || missing="$missing SCW_ORGANIZATION_ID(var)"
           if [ -n "$missing" ]; then
             echo "::error::missing configuration:$missing"
             echo "See docs/REGISTRAR.md. Note that environment-scoped values are"
