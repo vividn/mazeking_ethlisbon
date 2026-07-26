@@ -16,9 +16,16 @@ import { MyMazesPage } from './components/MyMazesPage';
 import { GalleryPage } from './components/GalleryPage';
 import { TestnetBanner } from './components/TestnetBanner';
 import { DebugWinModalButton } from './components/DebugWinModalButton';
+import { HomePage } from './components/HomePage';
 import { filterToValidChars } from './lib/pixelFont';
 import { config } from './lib/wagmi';
 import { MAX_MAZE_CELLS } from './lib/mazeConstants.generated';
+import {
+  DEFAULT_SEED as SEED_URL_DEFAULT,
+  seedToPath,
+  seedFromLocation,
+  isGamePath,
+} from './lib/seedUrl';
 
 const queryClient = new QueryClient();
 
@@ -29,12 +36,14 @@ function sanitizeSeed(seed: string): string {
 }
 
 function readSeedFromURL(): string {
-  const params = new URLSearchParams(window.location.search);
-  const urlSeed = params.get('seed');
+  const urlSeed = seedFromLocation(
+    window.location.pathname,
+    window.location.search
+  );
   return urlSeed ? sanitizeSeed(urlSeed) : DEFAULT_SEED;
 }
 
-export const DEFAULT_SEED = 'maze♚ ♚king';
+export const DEFAULT_SEED = SEED_URL_DEFAULT;
 export { MAX_MAZE_CELLS };
 
 export interface OutletCtx {
@@ -61,31 +70,22 @@ function AppShell() {
   // game returns to seed mode the next time `selectSeed` is called.
   const [replay, setReplay] = useState<ReplayPayload | null>(null);
 
-  const isGameRoute = location.pathname === '/';
+  const isGameRoute = isGamePath(location.pathname);
 
   const handleSeedChange = useCallback((newSeed: string) => {
     setSeed(newSeed);
     setReplay(null);
-    const url = new URL(window.location.href);
-    if (newSeed === DEFAULT_SEED) {
-      url.searchParams.delete('seed');
-    } else {
-      url.searchParams.set('seed', newSeed);
-    }
-    // Stay on / and update only the query string. We bypass react-router's
-    // navigate() here so seed-typing on / doesn't churn the route's history
-    // entries — same semantics as before routing was introduced.
-    window.history.pushState({}, '', url.toString());
+    // Rewrite the path rather than a query parameter, and bypass
+    // react-router's navigate() so typing a seed does not churn the route's
+    // history entries — same semantics as before routing was introduced.
+    window.history.pushState({}, '', seedToPath(newSeed));
   }, []);
 
   const selectSeed = useCallback(
     (newSeed: string) => {
       setSeed(newSeed);
       setReplay(null);
-      const params = new URLSearchParams();
-      if (newSeed !== DEFAULT_SEED) params.set('seed', newSeed);
-      const search = params.toString();
-      navigate(search ? `/?${search}` : '/');
+      navigate(seedToPath(newSeed));
     },
     [navigate]
   );
@@ -93,18 +93,19 @@ function AppShell() {
   const selectReplay = useCallback(
     (payload: ReplayPayload) => {
       setReplay(payload);
-      // Drop any ?seed= from the URL — replay is identified by tokenId, not
+      // Drop any seed from the URL — a replay is identified by tokenId, not
       // by a typeable seed string.
       navigate('/');
     },
     [navigate]
   );
 
-  // Browser back/forward updates seed when we land back on / with a different
-  // ?seed query. Route-level back/forward is already handled by react-router.
+  // Browser back/forward updates the seed when we land back on a game path
+  // with a different seed. Route-level back/forward is already handled by
+  // react-router.
   useEffect(() => {
     const onPop = () => {
-      if (window.location.pathname === '/') {
+      if (isGamePath(window.location.pathname)) {
         setSeed(readSeedFromURL());
         setReplay(null);
       }
@@ -112,6 +113,15 @@ function AppShell() {
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);
+
+  // A pre-existing link of the form /?seed=X used to be the game. `/` is now
+  // the directions screen, so those links are rewritten to the canonical path
+  // instead of silently landing on a page that ignores their seed.
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const legacy = new URLSearchParams(location.search).get('seed');
+    if (legacy) navigate(seedToPath(sanitizeSeed(legacy)), { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const ctx: OutletCtx = { seed, selectSeed, selectReplay };
 
@@ -155,7 +165,11 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={null} />
+              <Route index element={<HomePage />} />
+              {/* The seed lives in the path: /s/<seed>. Rendering is handled
+                  by AppShell for any game path, so the element is null here
+                  exactly as it is for the index route. */}
+              <Route path="s/:seed" element={null} />
               <Route path="mazes" element={<MyMazesPage />} />
               <Route path="gallery" element={<GalleryPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
