@@ -102,6 +102,17 @@ honours it.
 
 ### 3. GitHub secrets and variables
 
+These are stored in the **`workflow_env` environment**, not at repository level, so the
+deploy job declares `environment: workflow_env`. This matters more than it looks:
+environment-scoped secrets are injected **only** into jobs that opt into that environment.
+A job without the `environment:` key receives empty strings for every `secrets.*` and
+`vars.*` reference — with no warning, no permissions error, and nothing in the log to
+indicate the values were scoped away rather than unset.
+
+The symptom is confusing from the settings page, because the secret plainly exists: adding
+it again reports that it already exists, while the run insists it is missing. Both are true.
+If a value is moved to repository scope instead, the `environment:` line can be dropped.
+
 | Secret | Required | Notes |
 |---|---|---|
 | `SCW_ACCESS_KEY_ID` | yes | Scaleway API key with write access to the bucket |

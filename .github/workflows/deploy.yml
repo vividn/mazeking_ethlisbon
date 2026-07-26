@@ -25,6 +25,11 @@ jobs:
     name: build + publish
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # The deploy credentials are environment-scoped rather than repository-wide.
+    # Without this line, `secrets.*` and `vars.*` resolve to empty strings in
+    # every step — GitHub does not warn, it simply injects nothing, so the
+    # failure surfaces as a missing value rather than a permissions error.
+    environment: workflow_env
     steps:
       - uses: actions/checkout@v4
 
@@ -69,8 +74,9 @@ jobs:
           SCW_REGION: ${{ secrets.SCW_REGION }}
         run: |
           set -euo pipefail
-          : "${SCW_ACCESS_KEY_ID:?missing secret SCW_ACCESS_KEY_ID}"
-          : "${SCW_SECRET_ACCESS_KEY:?missing secret SCW_SECRET_ACCESS_KEY}"
+          hint="set it in the 'workflow_env' environment, and confirm this job still declares environment: workflow_env"
+          : "${SCW_ACCESS_KEY_ID:?empty — $hint}"
+          : "${SCW_SECRET_ACCESS_KEY:?empty — $hint}"
           aws configure set aws_access_key_id     "$SCW_ACCESS_KEY_ID"
           aws configure set aws_secret_access_key "$SCW_SECRET_ACCESS_KEY"
           aws configure set default.region        "${SCW_REGION:-fr-par}"
@@ -88,7 +94,7 @@ jobs:
           SCW_REGION: ${{ secrets.SCW_REGION }}
         run: |
           set -euo pipefail
-          : "${SCW_BUCKET:?missing secret SCW_BUCKET}"
+          : "${SCW_BUCKET:?empty — set it in the 'workflow_env' environment, and confirm this job declares environment: workflow_env}"
           ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
           aws s3 sync frontend/dist "s3://${SCW_BUCKET}" \
             --endpoint-url "$ENDPOINT" \
