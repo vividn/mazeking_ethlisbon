@@ -4,13 +4,15 @@ pragma solidity ^0.8.24;
 import { ERC1155 } from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { ERC1155Supply } from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
+import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { MazeConstants } from "./MazeConstants.sol";
 import { IBadgeAwarder } from "./IBadgeAwarder.sol";
 
 /// @title MazeKingNFT
 /// @notice ERC-1155 NFT contract for MazeKing game achievements
 /// @dev Uses AccessControl for role-based permissions
-contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
+contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR_ROLE");
@@ -93,6 +95,9 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     ///      recorded best without erasing the solve itself.
     error NonTransferable();
 
+    /// @dev The attestation was not signed by an account holding REGISTRAR_ROLE.
+    error BadAttestation(address signer);
+
     error WithdrawalFailed();
     error NoBalance();
 
@@ -110,6 +115,7 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     event FirstSolve(address indexed solver, uint256 indexed tokenId, uint16 moveCount);
     event NewBestScore(address indexed solver, uint256 indexed tokenId, uint16 newBest);
     event BadgesAwarded(address indexed solver, uint256 indexed tokenId, uint32 newBadges);
+    event MazeAttested(uint256 indexed tokenId, address indexed registrar, uint32 optimalMoves);
 
     constructor(
         string memory _name,
@@ -117,7 +123,7 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
         string memory _uri,
         address _owner,
         address _verifier
-    ) ERC1155(_uri) {
+    ) ERC1155(_uri) EIP712("MazeKing", "1") {
         name = _name;
         symbol = _symbol;
         verifierContract = _verifier;
@@ -126,6 +132,74 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
         _grantRole(OWNER_ROLE, _owner);
         _grantRole(WITHDRAWER_ROLE, _owner);
         _grantRole(REGISTRAR_ROLE, _owner);
+    }
+
+    /// @dev EIP-712 type for a registrar's statement about a maze.
+    ///
+    ///      The registrar's role is to assert two things a player must not be
+    ///      able to assert for themselves: which layout a maze really has, and
+    ///      what its optimal solve costs. That is a statement, and a statement
+    ///      can be signed rather than transacted — which is the whole point.
+    ///      A signing registrar sends no transactions, so it has no nonce to
+    ///      serialise, needs no queue or lock behind a horizontally scaled
+    ///      service, and spends no gas: the attestation rides along inside the
+    ///      player's own mint.
+    ///
+    ///      `layoutHash` rather than the layout itself keeps the signed payload
+    ///      fixed-size while still binding the exact bytes, so a caller cannot
+    ///      pair a valid signature with a different layout.
+    bytes32 private constant ATTESTATION_TYPEHASH =
+        keccak256("MazeAttestation(bytes32 mazeHash,bytes32 layoutHash,uint32 optimalMoves)");
+
+    /// @notice Hash a registrar attestation, for signing off chain.
+    /// @dev The EIP-712 domain binds chain id and contract address, so a
+    ///      signature produced for one deployment cannot be replayed onto
+    ///      another. Replay within a deployment is harmless: registration is
+    ///      idempotent and every value is a pure function of the maze.
+    function attestationDigest(bytes32 mazeHash, bytes32 layoutHash, uint32 optimalMoves_)
+        public
+        view
+        returns (bytes32)
+    {
+        return _hashTypedDataV4(
+            keccak256(abi.encode(ATTESTATION_TYPEHASH, mazeHash, layoutHash, optimalMoves_))
+        );
+    }
+
+    /// @notice Apply a registrar-signed statement about a maze.
+    /// @dev Permissionless to call: the authority is the signature, not the
+    ///      caller. Anyone holding a valid attestation may register the maze it
+    ///      describes, which is what lets a player carry their own.
+    function registerWithAttestation(
+        bytes32 mazeHash,
+        bytes calldata layout,
+        uint32 optimalMoves_,
+        bytes calldata signature
+    ) external {
+        _applyAttestation(mazeHash, layout, optimalMoves_, signature);
+    }
+
+    function _applyAttestation(
+        bytes32 mazeHash,
+        bytes calldata layout,
+        uint32 optimalMoves_,
+        bytes calldata signature
+    ) internal {
+        address signer = ECDSA.recover(
+            attestationDigest(mazeHash, keccak256(layout), optimalMoves_), signature
+        );
+        if (!hasRole(REGISTRAR_ROLE, signer)) revert BadAttestation(signer);
+
+        uint256 tokenId = uint256(mazeHash);
+        layouts[tokenId] = layout;
+        _listMaze(tokenId);
+        optimalMoves[tokenId] = optimalMoves_;
+        registrarApproved[tokenId] = true;
+
+        emit LayoutStored(tokenId, layout.length);
+        emit OptimalMovesSet(tokenId, optimalMoves_);
+        emit RegistrarApprovedSet(tokenId, true);
+        emit MazeAttested(tokenId, signer, optimalMoves_);
     }
 
     /// @notice Update the base URI
@@ -151,14 +225,31 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     /// @param moveCount  Number of moves taken (must match the proof).
     /// @param bearer     Whether the proof was produced UNBOUND. See the
     ///                   sender-binding note below; false is the safe default.
+    /// @param attestedOptimalMoves Optimal solve asserted by the registrar.
+    ///        Ignored when `attestation` is empty.
+    /// @param attestation Registrar signature over this maze, or empty to skip.
+    ///        Carrying it here registers the maze in the same transaction that
+    ///        mints it, so a maze becomes badge-capable the first time anyone
+    ///        solves it — without the registrar sending a transaction, and so
+    ///        without a registrar nonce to serialise behind a scaled-out
+    ///        service.
     function mintWithProof(
         bytes calldata proof,
         bytes32 mazeHash,
         bytes calldata layout,
         uint16 moveCount,
-        bool bearer
+        bool bearer,
+        uint32 attestedOptimalMoves,
+        bytes calldata attestation
     ) external {
         require(verifierContract != address(0), "Verifier not set");
+
+        // Applied before the proof is checked so that the layout and optimum
+        // are in place before badges are graded, and so a maze registers even
+        // if this particular proof turns out to be invalid.
+        if (attestation.length != 0) {
+            _applyAttestation(mazeHash, layout, attestedOptimalMoves, attestation);
+        }
 
         // 1. Verify proof on-chain with public inputs =
         //    [mazeHash, moveCount, sender].

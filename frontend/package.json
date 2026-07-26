@@ -10,7 +10,9 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e-full": "RUN_E2E_FULL_PROOF=1 vitest run e2eSolveProve",
-    "test:e2e-mint": "RUN_E2E_MINT=1 vitest run e2eMintOnAnvil"
+    "test:e2e-mint": "RUN_E2E_MINT=1 vitest run e2eMintOnAnvil",
+    "build:attestor": "vite build --config vite.attestor.config.ts",
+    "test:attestation": "RUN_ATTESTATION=1 vitest run attestation"
   },
   "dependencies": {
     "@aztec/bb.js": "catalog:zktools",

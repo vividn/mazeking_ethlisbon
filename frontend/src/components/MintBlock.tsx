@@ -6,6 +6,7 @@ import type { ProofState } from '../hooks/useZkProof';
 import { useMintNFT } from '../hooks/useMintNFT';
 import { ProofImage } from './ProofImage';
 import { areContractsDeployed } from '../lib/contracts';
+import { useMazeRegistration } from '../hooks/useMazeRegistration';
 import { pickTextColor } from '../lib/contrastText';
 import crownUrl from '../glyphs/crown.png?url';
 
@@ -94,6 +95,12 @@ interface MintBlockProps {
   startProofGeneration: () => Promise<void>;
   resetProof: () => void;
   mockMode: boolean;
+  /**
+   * The seed this maze grew from. Passed on to the mint so a registrar
+   * attestation can be fetched for it; absent, the mint simply goes
+   * unattested and no badges are awarded.
+   */
+  seed?: string | null;
   /** Rendered in the button column below the mint button + errors. */
   children?: React.ReactNode;
 }
@@ -105,6 +112,7 @@ export function MintBlock({
   startProofGeneration,
   resetProof,
   mockMode,
+  seed,
   children,
 }: MintBlockProps) {
   const { address, isConnected, chain } = useAccount();
@@ -139,6 +147,17 @@ export function MintBlock({
         : 'stale';
 
   const [bearerAcknowledged, setBearerAcknowledged] = useState(false);
+
+  // Badges are graded against the maze's registered optimum, so an
+  // unregistered maze awards nothing at all -- not even the robot crown for a
+  // flawless solve. That is invisible from the game, so it is offered here
+  // rather than left to chance.
+  const {
+    status: registration,
+    attestation,
+    optimalMoves,
+    register,
+  } = useMazeRegistration(proofState.mazeHash, seed);
 
   const handleMint = async () => {
     if (mockMode) {
@@ -180,7 +199,9 @@ export function MintBlock({
         proofState.mazeHash,
         proofState.layoutBytes,
         moveCount,
-        proofBinding === 'bearer'
+        proofBinding === 'bearer',
+        seed ?? undefined,
+        attestation
       );
     } catch (err) {
       console.error('mintWithProof threw:', err);
@@ -288,6 +309,13 @@ export function MintBlock({
     fontSize: '16px',
   };
 
+  const registerButtonStyle: React.CSSProperties = {
+    ...baseActionButtonStyle,
+    backgroundColor: colors.wallColor,
+    color: pickTextColor(colors.wallColor),
+    fontSize: '14px',
+  };
+
   const retryButtonStyle: React.CSSProperties = {
     ...baseActionButtonStyle,
     backgroundColor: colors.wallColor,
@@ -333,7 +361,15 @@ export function MintBlock({
 
   return (
     <div style={boxStyle} data-testid="proof-actions-box">
-      <div className="win-proof-row" style={{ ...proofBoxInnerStyle, flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+      <div
+        className="win-proof-row"
+        style={{
+          ...proofBoxInnerStyle,
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '10px',
+        }}
+      >
         <div className="win-proof-column" style={proofColumnStyle}>
           {proofReady && proofState.imageDataUrl && proofState.proof ? (
             <ProofImage
@@ -367,7 +403,9 @@ export function MintBlock({
           )}
         </div>
 
-        <div style={{ ...buttonColumnStyle, width: '100%', alignItems: 'stretch' }}>
+        <div
+          style={{ ...buttonColumnStyle, width: '100%', alignItems: 'stretch' }}
+        >
           {/* Generating the proof is the first action and belongs directly
               under the window it fills, rather than inside the placeholder
               where it read as part of the artwork. */}
@@ -382,6 +420,60 @@ export function MintBlock({
             >
               Generate ZK Proof
             </button>
+          )}
+          {/* An unregistered maze mints fine but awards nothing, so the offer
+              to register belongs before the mint rather than after it. */}
+          {!mockMode && registration === 'unregistered' && (
+            <>
+              <button
+                type="button"
+                className="win-action-button"
+                style={registerButtonStyle}
+                onClick={() => void register()}
+                data-testid="register-maze-button"
+              >
+                Register This Maze
+              </button>
+              <div style={{ ...reasonTextStyle, lineHeight: 1.4 }}>
+                Nobody has registered this maze yet, so it can't award badges —
+                not even the robot crown for a perfect solve. Registering asks
+                the registrar to work out the shortest possible route and sign a
+                statement saying so. It costs nothing and needs no wallet: the
+                signature rides along with your mint and is recorded in the same
+                transaction.
+              </div>
+            </>
+          )}
+          {!mockMode && registration === 'signing' && (
+            <div
+              style={{ ...reasonTextStyle, lineHeight: 1.4 }}
+              aria-live="polite"
+            >
+              Working out the shortest route through this maze…
+            </div>
+          )}
+          {!mockMode && registration === 'signed' && (
+            <div
+              style={{ ...reasonTextStyle, lineHeight: 1.4 }}
+              data-testid="registration-signed"
+              aria-live="polite"
+            >
+              ✓ Signed
+              {optimalMoves ? ` — shortest route is ${optimalMoves} moves` : ''}
+              . It will be recorded when you mint, and your badge graded against
+              it.
+            </div>
+          )}
+          {!mockMode && registration === 'unavailable' && (
+            <div style={{ ...reasonTextStyle, lineHeight: 1.4 }} role="alert">
+              The registrar couldn't be reached, so this maze stays unregistered
+              and won't award badges. Minting still works.
+            </div>
+          )}
+          {!mockMode && registration === 'registered' && optimalMoves && (
+            <div style={{ ...reasonTextStyle, opacity: 0.85 }}>
+              Registered — shortest route is {optimalMoves} moves.
+            </div>
           )}
           {/* Connecting is its own step rather than a label the mint button
               borrows, so the order of operations is visible before minting. */}

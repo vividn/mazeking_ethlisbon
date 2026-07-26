@@ -1,0 +1,197 @@
+name: Deploy attestor
+
+# Deploys the registrar attestation signer to Scaleway Serverless Functions.
+#
+# Kept separate from the frontend deploy on purpose. The attestor changes far
+# less often than the site, and it is the only piece of this system that touches
+# a signing key — a deploy that can reach the key should run when the signer
+# changes, not on every frontend commit.
+#
+# See docs/REGISTRAR.md for what the function does, why it signs rather than
+# transacts, and the IAM permission sets the deploying application needs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/scripts/attest-maze.ts'
+      - 'frontend/scripts/derive-maze.ts'
+      - 'frontend/src/lib/**'
+      - 'frontend/vite.attestor.config.ts'
+      - '.github/workflows/deploy-attestor.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-attestor-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: '9'
+  NODE_VERSION: '20'
+
+jobs:
+  deploy:
+    name: build + deploy function
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same reason as the frontend deploy: the credentials are
+    # environment-scoped, and without this line `secrets.*` and `vars.*` resolve
+    # to empty strings with no warning at all.
+    environment: workflow_env
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the function package
+        working-directory: frontend
+        run: pnpm build:attestor
+
+      # The bundler compiles the game's own maze generator into the function.
+      # A build that silently altered the derivation would break seed->layout
+      # consistency without breaking the build, so the artifact is exercised
+      # before it is shipped rather than after.
+      - name: Check the built artifact derives a maze
+        working-directory: frontend/dist-attestor
+        env:
+          # Anvil account #3. A throwaway key is enough: this only proves the
+          # code path runs, and using the real registrar key here would put it
+          # in a step that does not need it.
+          REGISTRAR_PRIVATE_KEY: '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6'
+          CHAIN_ID: '31337'
+          NFT_ADDRESS: '0x0000000000000000000000000000000000000001'
+        run: |
+          npm install --omit=dev --silent
+          node --input-type=module -e "
+            const { handle } = await import('./handler.mjs');
+            const res = await handle({ queryStringParameters: { seed: 'Zero Knowledge' } });
+            if (res.statusCode !== 200) {
+              console.error(res.body);
+              throw new Error('attestor did not answer 200');
+            }
+            const body = JSON.parse(res.body);
+            if (!body.signature || !body.optimalMoves) {
+              throw new Error('attestor answered without a signature or an optimum');
+            }
+            console.log('optimum', body.optimalMoves, 'mazeHash', body.mazeHash);
+          "
+
+      - name: Preflight the required configuration
+        env:
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
+          REGISTRAR_PRIVATE_KEY: ${{ secrets.REGISTRAR_PRIVATE_KEY }}
+          NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
+          CHAIN_ID: ${{ vars.CHAIN_ID }}
+        run: |
+          # Report every missing value at once. Failing on the first one turns a
+          # single fix into several round trips through a 3-minute workflow.
+          missing=""
+          [ -n "$SCW_SECRET_KEY" ] || missing="$missing SCW_SECRET_ACCESS_KEY(secret)"
+          [ -n "$REGISTRAR_PRIVATE_KEY" ] || missing="$missing REGISTRAR_PRIVATE_KEY(secret)"
+          [ -n "$NFT_ADDRESS" ] || missing="$missing NFT_ADDRESS(var)"
+          [ -n "$CHAIN_ID" ] || missing="$missing CHAIN_ID(var)"
+          if [ -n "$missing" ]; then
+            echo "::error::missing configuration:$missing"
+            echo "See docs/REGISTRAR.md. Note that environment-scoped values are"
+            echo "only visible to a job declaring 'environment: workflow_env'."
+            exit 1
+          fi
+          # Never echo the key itself; its length is enough to catch a paste
+          # that lost the 0x prefix or picked up a newline.
+          echo "registrar key length: ${#REGISTRAR_PRIVATE_KEY} (expected 66)"
+
+      - name: Install the Scaleway CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/scaleway/scaleway-cli/master/scripts/get.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
+      - name: Deploy the function
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY_ID }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
+          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
+          SCW_DEFAULT_ORGANIZATION_ID: ${{ vars.SCW_ORGANIZATION_ID }}
+          SCW_DEFAULT_REGION: ${{ vars.SCW_REGION || 'fr-par' }}
+          REGISTRAR_PRIVATE_KEY: ${{ secrets.REGISTRAR_PRIVATE_KEY }}
+          NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
+          CHAIN_ID: ${{ vars.CHAIN_ID }}
+          NAMESPACE: ${{ vars.SCW_FUNCTION_NAMESPACE || 'mazeking' }}
+        working-directory: frontend/dist-attestor
+        run: |
+          set -euo pipefail
+
+          # Reuse the namespace if it exists. Creating it unconditionally fails
+          # on the second deploy, which would make this workflow work exactly
+          # once.
+          ns_id=$(scw function namespace list name="$NAMESPACE" -o json \
+            | jq -r '.[0].id // empty')
+          if [ -z "$ns_id" ]; then
+            echo "creating namespace $NAMESPACE"
+            ns_id=$(scw function namespace create name="$NAMESPACE" -o json | jq -r '.id')
+          fi
+          echo "namespace: $ns_id"
+
+          fn_id=$(scw function function list namespace-id="$ns_id" name=attest -o json \
+            | jq -r '.[0].id // empty')
+          if [ -z "$fn_id" ]; then
+            fn_id=$(scw function function create \
+              namespace-id="$ns_id" name=attest runtime=node20 \
+              handler=handler.handle http-option=redirected privacy=public \
+              min-scale=0 max-scale=5 memory-limit=512 -o json | jq -r '.id')
+          fi
+          echo "function: $fn_id"
+
+          # Secrets and environment are set on the function itself rather than
+          # baked into the package, so the key never appears in an artifact.
+          scw function function update "$fn_id" \
+            secret-environment-variables.0.key=REGISTRAR_PRIVATE_KEY \
+            secret-environment-variables.0.value="$REGISTRAR_PRIVATE_KEY" \
+            environment-variables.NFT_ADDRESS="$NFT_ADDRESS" \
+            environment-variables.CHAIN_ID="$CHAIN_ID" >/dev/null
+
+          zip -qr /tmp/attestor.zip .
+          scw function function deploy "$fn_id" zip-file=/tmp/attestor.zip
+
+          url=$(scw function function get "$fn_id" -o json | jq -r '.domain_name')
+          echo "attestor deployed at https://$url"
+          echo "Set VITE_ATTESTOR_URL to https://$url so the site uses it." >> "$GITHUB_STEP_SUMMARY"
+
+      # A deployed function that answers 500 is worse than one that failed to
+      # deploy, because nothing draws attention to it. The client treats every
+      # attestor failure as "mint unattested", so a broken attestor shows up as
+      # badges quietly never being awarded.
+      - name: Verify the deployed function actually signs
+        env:
+          SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY_ID }}
+          SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
+          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
+          SCW_DEFAULT_REGION: ${{ vars.SCW_REGION || 'fr-par' }}
+          NAMESPACE: ${{ vars.SCW_FUNCTION_NAMESPACE || 'mazeking' }}
+        run: |
+          set -uo pipefail
+          ns_id=$(scw function namespace list name="$NAMESPACE" -o json | jq -r '.[0].id // empty')
+          fn_id=$(scw function function list namespace-id="$ns_id" name=attest -o json | jq -r '.[0].id // empty')
+          url=$(scw function function get "$fn_id" -o json | jq -r '.domain_name')
+
+          # A cold start can outlast the first request, so allow retries before
+          # calling it broken.
+          for attempt in 1 2 3 4 5; do
+            body=$(curl -fsS --max-time 30 "https://$url?seed=Zero%20Knowledge" || true)
+            if echo "$body" | jq -e '.signature and .optimalMoves' >/dev/null 2>&1; then
+              echo "attestor answered with optimum $(echo "$body" | jq -r '.optimalMoves')"
+              exit 0
+            fi
+            echo "attempt $attempt did not return a signature; retrying"
+            sleep 10
+          done
+          echo "::error::deployed attestor never returned a signature"
+          exit 1
