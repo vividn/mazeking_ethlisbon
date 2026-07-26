@@ -122,6 +122,44 @@ project the function lives in:
 variables, which the Functions API covers — no Secret Manager permission
 needed.
 
+## CI configuration
+
+`.github/workflows/deploy-attestor.yml` builds and deploys the function on
+pushes that touch it. Everything below is **environment-scoped to
+`workflow_env`**, and a job that does not declare `environment: workflow_env`
+sees empty strings with no warning at all — the failure looks like a missing
+value rather than a permissions problem.
+
+Secrets:
+
+| Secret | Why it is a secret |
+| --- | --- |
+| `REGISTRAR_PRIVATE_KEY` | The signing key. Never a `VITE_*` value — those are inlined into the bundle. |
+| `SCW_ACCESS_KEY_ID` / `SCW_SECRET_ACCESS_KEY` | Scaleway API key for the deploying application. |
+
+Variables (all public by nature):
+
+| Variable | Meaning |
+| --- | --- |
+| `REGISTRAR_ADDRESS` | The signer's address. Only needed to grant the role, but worth recording so it is greppable when checking which key is live. |
+| `NFT_ADDRESS` | The deployment the function signs for. |
+| `CHAIN_ID` | Likewise. |
+| `SCW_PROJECT_ID` / `SCW_ORGANIZATION_ID` | Scaleway target. |
+| `SCW_REGION` | Defaults to `fr-par`. |
+| `SCW_FUNCTION_NAMESPACE` | Defaults to `mazeking`. |
+| `VITE_ATTESTOR_URL` | The deployed function's URL, read by the **frontend** deploy. |
+
+The workflow exercises the built artifact before shipping it — it runs the
+handler under plain `node`, from a standalone `npm install` of the generated
+`package.json`, and fails if it does not return a signature. A bundler that
+silently altered the maze derivation would break seed→layout consistency
+without breaking the build, so the artifact is checked rather than trusted.
+
+It then calls the *deployed* function and fails if that does not sign either.
+A function that deploys and answers 500 is worse than one that fails to deploy:
+the client treats every attestor failure as "mint unattested", so a broken
+attestor surfaces only as badges quietly never being awarded.
+
 ## Environment
 
 | Variable | Meaning |
