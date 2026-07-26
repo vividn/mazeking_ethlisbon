@@ -291,6 +291,130 @@ contract MazeKingNFTTest is Test {
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
     }
 
+    function test_MazesOf_ListsSolvedMazes() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        assertEq(nft.mazeCountOf(user), 0);
+        assertEq(nft.mazesOf(user).length, 0);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        uint256[] memory owned = nft.mazesOf(user);
+        assertEq(owned.length, 1);
+        assertEq(owned[0], uint256(mazeHash));
+        assertEq(nft.mazeCountOf(user), 1);
+
+        // Another solver's collection is independent.
+        assertEq(nft.mazeCountOf(address(0xFEE1)), 0);
+    }
+
+    function test_MazesOf_ResolvingTheSameMazeTwiceDoesNotDuplicate() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.startPrank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 80, false);
+        vm.stopPrank();
+
+        assertEq(nft.mazeCountOf(user), 1);
+    }
+
+    function test_Transfer_Reverts_TokensAreSoulbound() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        // The token asserts that `user` solved this maze. Handing it to someone
+        // else would hand over a claim they did not earn.
+        vm.prank(user);
+        vm.expectRevert(MazeKingNFT.NonTransferable.selector);
+        nft.safeTransferFrom(user, address(0xFEE1), tokenId, 1, "");
+
+        assertEq(nft.balanceOf(user, tokenId), 1);
+        assertEq(nft.balanceOf(address(0xFEE1), tokenId), 0);
+    }
+
+    function test_BatchTransfer_Reverts_TokensAreSoulbound() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        uint256[] memory ids = new uint256[](1);
+        uint256[] memory amounts = new uint256[](1);
+        ids[0] = uint256(mazeHash);
+        amounts[0] = 1;
+
+        vm.prank(user);
+        vm.expectRevert(MazeKingNFT.NonTransferable.selector);
+        nft.safeBatchTransferFrom(user, address(0xFEE1), ids, amounts, "");
+    }
+
+    /// Burning is blocked too, and not out of strictness. `stats` survives a
+    /// burn, so the solve is never actually erased — while the mint path reads
+    /// `balanceOf == 0` as a first solve, so re-solving afterwards overwrites
+    /// minMoves and resets timesSolved. Measured before this was disallowed: a
+    /// 22-move best became 90, and a count of 2 became 1.
+    function test_Burn_Reverts_TokensAreMintOnly() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        // ERC1155Burnable is no longer inherited, so there is no burn entry
+        // point at all. The underlying transfer-to-zero is refused too —
+        // by OpenZeppelin's own zero-address receiver check, which fires
+        // before _update, so the specific error is ERC1155InvalidReceiver
+        // rather than NonTransferable. What matters is that the balance is
+        // untouched by either route.
+        vm.prank(user);
+        vm.expectRevert();
+        nft.safeTransferFrom(user, address(0), tokenId, 1, "");
+
+        assertEq(nft.balanceOf(user, tokenId), 1);
+    }
+
+    /// A solver's best run cannot be destroyed by any sequence of actions,
+    /// which is the property blocking burn is really protecting.
+    function test_BestScoreSurvivesResolving() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.startPrank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 22, false);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 90, false);
+        vm.stopPrank();
+
+        (uint16 best, uint16 solves,,) = nft.stats(tokenId, user);
+        assertEq(best, 22);
+        assertEq(solves, 3);
+        assertEq(nft.mazeCountOf(user), 1);
+    }
+
+    function test_MazesOfSlice_Pages() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        assertEq(nft.mazesOfSlice(user, 0, 10).length, 1);
+        // start past the end returns empty rather than reverting
+        assertEq(nft.mazesOfSlice(user, 5, 10).length, 0);
+        assertEq(nft.mazesOfSlice(user, 0, 0).length, 0);
+    }
+
     function test_MintWithProof_InvalidProof() public {
         verifier.setShouldPass(false);
 

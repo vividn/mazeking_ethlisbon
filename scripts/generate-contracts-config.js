@@ -121,12 +121,21 @@ function writeIfChanged(filepath, content) {
 // won't have them. The mint flow reads tokenURI / awarder state through the
 // NFT contract, so frontend code only needs these addresses for direct
 // off-chain calls or operator audits.
+// Numeric fields are emitted unquoted; `deployBlock` is consumed as a number
+// by the log-scan floor in useOwnedMazes.
+function optionalNumberLine(deployment, key) {
+  const value = deployment[key];
+  return value === undefined || value === null || value === ''
+    ? ''
+    : `\n    ${key}: ${Number(value)},`;
+}
+
 function optionalLine(deployment, key, alias) {
   const value = deployment[key];
   return value ? `\n    ${alias || key}: '${value}',` : '';
 }
 
-const TYPE_SHAPE = `{ nft: \`0x\${string}\`; verifier: \`0x\${string}\`; renderer?: \`0x\${string}\`; badgeAwarder?: \`0x\${string}\` }`;
+const TYPE_SHAPE = `{ nft: \`0x\${string}\`; verifier: \`0x\${string}\`; renderer?: \`0x\${string}\`; badgeAwarder?: \`0x\${string}\`; deployBlock?: number }`;
 
 function renderLocal(chainId, deployment) {
   // Single-chain local map. Loader merges this into the public map.
@@ -145,7 +154,7 @@ export const CONTRACT_ADDRESSES: Record<
 > = {
   ${chainId}: {
     nft: '${deployment.nft}',
-    verifier: '${deployment.verifier}',${optionalLine(deployment, 'renderer')}${optionalLine(deployment, 'badgeAwarder')}
+    verifier: '${deployment.verifier}',${optionalLine(deployment, 'renderer')}${optionalLine(deployment, 'badgeAwarder')}${optionalNumberLine(deployment, 'deployBlock')}
   },
 };
 `;
@@ -167,9 +176,13 @@ function parseExistingChains(filepath) {
   let m;
   while ((m = entryRe.exec(mapMatch[1])) !== null) {
     const fields = {};
-    const fieldRe = /(\w+):\s*'([^']*)'/g;
+    // Quoted strings AND unquoted numbers (deployBlock) — otherwise a
+    // redeploy of one chain silently drops the others' block floors.
+    const fieldRe = /(\w+):\s*(?:'([^']*)'|(\d+))/g;
     let f;
-    while ((f = fieldRe.exec(m[2])) !== null) fields[f[1]] = f[2];
+    while ((f = fieldRe.exec(m[2])) !== null) {
+      fields[f[1]] = f[2] !== undefined ? f[2] : Number(f[3]);
+    }
     if (fields.nft && fields.verifier) chains[m[1]] = fields;
   }
   return chains;
@@ -178,7 +191,7 @@ function parseExistingChains(filepath) {
 function renderEntry(chainId, data) {
   return `  ${chainId}: {
     nft: '${data.nft}',
-    verifier: '${data.verifier}',${optionalLine(data, 'renderer')}${optionalLine(data, 'badgeAwarder')}
+    verifier: '${data.verifier}',${optionalLine(data, 'renderer')}${optionalLine(data, 'badgeAwarder')}${optionalNumberLine(data, 'deployBlock')}
   },`;
 }
 

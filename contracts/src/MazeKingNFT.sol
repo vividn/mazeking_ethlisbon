@@ -3,9 +3,6 @@ pragma solidity ^0.8.24;
 
 import { ERC1155 } from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
-import {
-    ERC1155Burnable
-} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Burnable.sol";
 import { ERC1155Supply } from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155Supply.sol";
 import { MazeConstants } from "./MazeConstants.sol";
 import { IBadgeAwarder } from "./IBadgeAwarder.sol";
@@ -13,7 +10,7 @@ import { IBadgeAwarder } from "./IBadgeAwarder.sol";
 /// @title MazeKingNFT
 /// @notice ERC-1155 NFT contract for MazeKing game achievements
 /// @dev Uses AccessControl for role-based permissions
-contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
+contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
     bytes32 public constant WITHDRAWER_ROLE = keccak256("WITHDRAWER_ROLE");
     bytes32 public constant REGISTRAR_ROLE = keccak256("REGISTRAR_ROLE");
@@ -43,6 +40,12 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     mapping(uint256 => uint32) public optimalMoves;
     mapping(uint256 => bool) public registered;
     mapping(uint256 => bool) public registrarApproved;
+
+    // Owner enumeration — the token ids each address has solved, in mint order.
+    // Lets a client list a collection with one view call instead of scanning
+    // ERC-1155 transfer logs. Tokens are mint-only, so this is exactly the set
+    // held: entries are never added twice and never become stale.
+    mapping(address => uint256[]) private _mintedBy;
     // Mazes flagged by the registrar as unacceptable (filtered from public views).
     // Tokens already minted remain owned; this is a display-layer signal.
     mapping(uint256 => bool) public disqualified;
@@ -63,6 +66,11 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     uint32 public constant BADGE_COPPER = 1 << 4; // 4. Copper (<1.25x optimal)
     uint32 public constant BADGE_STONE = 1 << 5; // 5. Stone (max possible moves)
     // Badges 6-31 reserved for future use (placement, special achievements, etc.)
+
+    /// @dev Maze tokens are mint-only. Transferring would hand over a claim the
+    ///      recipient did not earn; burning would destroy the solver's own
+    ///      recorded best without erasing the solve itself.
+    error NonTransferable();
 
     error WithdrawalFailed();
     error NoBalance();
@@ -177,6 +185,19 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
             _mint(msg.sender, tokenId, 1, "");
         }
 
+        // 3b. Enumeration. ERC-1155 cannot list an address's tokens, so without
+        //     this a client must scan transfer logs — which needs a block
+        //     range, silently misses anything older than it, and breaks on RPCs
+        //     with narrow eth_getLogs limits.
+        //
+        //     Tokens are mint-only, so `balanceOf == 0` can be true exactly
+        //     once per (solver, maze): before the first solve. isFirstMint is
+        //     therefore a sufficient guard on its own and no separate flag is
+        //     needed. This list is exactly the set of tokens held.
+        if (isFirstMint) {
+            _mintedBy[msg.sender].push(tokenId);
+        }
+
         // 4. Store the maze layout on first mint of this maze (any user).
         //    Layout is shared across all solvers; subsequent mints are O(1).
         if (layouts[tokenId].length == 0) {
@@ -238,6 +259,38 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
             return IMazeRenderer(r).tokenURI(tokenId, layout);
         }
         return super.uri(tokenId);
+    }
+
+    /// @notice Every maze this address has solved, in mint order.
+    /// @dev Enumeration for clients: one call replaces a transfer-log scan.
+    ///      Entries persist through transfers — this is "solved", not "held".
+    ///      Filter by `balanceOf` if you need present ownership.
+    function mazesOf(address owner) external view returns (uint256[] memory) {
+        return _mintedBy[owner];
+    }
+
+    /// @notice How many distinct mazes this address has solved.
+    /// @dev Cheap enough for a header badge; avoids returning the whole array.
+    function mazeCountOf(address owner) external view returns (uint256) {
+        return _mintedBy[owner].length;
+    }
+
+    /// @notice Page through `mazesOf` for addresses with large collections.
+    /// @dev Returns fewer than `limit` items when the end is reached, and an
+    ///      empty array when `start` is past the end.
+    function mazesOfSlice(address owner, uint256 start, uint256 limit)
+        external
+        view
+        returns (uint256[] memory page)
+    {
+        uint256[] storage all = _mintedBy[owner];
+        if (start >= all.length) return new uint256[](0);
+        uint256 end = start + limit;
+        if (end > all.length) end = all.length;
+        page = new uint256[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            page[i - start] = all[i];
+        }
     }
 
     /// @notice Record the optimal (minimum) move count for a maze
@@ -322,10 +375,23 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
 
     // Required overrides for multiple inheritance
 
+    /// @dev Soulbound, mint-only. A maze token is a claim that *this* account
+    ///      solved the maze; the badges and best-move count hanging off it
+    ///      belong to the solver, not to whoever holds the token.
+    ///
+    ///      Burning is disallowed as well as transferring, and not for
+    ///      strictness. Burning does not erase anything: `stats` survives it,
+    ///      so the solve stays on chain while the token disappears. Worse, the
+    ///      mint path treats `balanceOf == 0` as a first solve, so re-solving
+    ///      after a burn OVERWRITES minMoves and resets timesSolved — a
+    ///      best-ever run is silently replaced by whatever was played next.
+    ///      An affordance that looks like deletion, deletes nothing, and
+    ///      destroys a record is worse than not offering it.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
         internal
         override(ERC1155, ERC1155Supply)
     {
+        if (from != address(0)) revert NonTransferable();
         super._update(from, to, ids, values);
     }
 

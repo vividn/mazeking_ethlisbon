@@ -3,7 +3,7 @@ import { useAccount, usePublicClient } from 'wagmi';
 import type { Address, Hex, PublicClient } from 'viem';
 import { hexToBytes, parseAbiItem } from 'viem';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
-import { getContractAddress } from '../lib/contracts';
+import { getContractAddress, getContractDeployBlock } from '../lib/contracts';
 
 /**
  * How far back from the current block to scan for ERC1155 transfer logs.
@@ -38,7 +38,7 @@ export interface OwnedMaze {
   /**
    * Badge bitfield from `stats(tokenId, owner)` — see `lib/badges.ts`.
    *
-   * Per-HOLDER, not per-token: two owners of the same maze can hold different
+   * Per-SOLVER, not per-token: two solvers of the same maze hold different
    * badges, which is why badges cannot live in the ERC-1155 `uri(tokenId)`
    * metadata (one URI is shared by every holder) and must be surfaced here.
    *
@@ -57,10 +57,16 @@ interface State {
 async function scanIncomingTokenIds(
   client: PublicClient,
   contract: Address,
-  owner: Address
+  owner: Address,
+  /** Deploy block, when known. Nothing exists before it, so scanning from
+   *  there is both complete and minimal. */
+  floorBlock?: bigint
 ): Promise<bigint[]> {
   const head = await client.getBlockNumber();
-  const oldest = head > LOOKBACK_BLOCKS ? head - LOOKBACK_BLOCKS : 0n;
+  // Prefer the deploy block: complete and minimal. Fall back to the fixed
+  // window only when the deployment block is unknown.
+  const windowFloor = head > LOOKBACK_BLOCKS ? head - LOOKBACK_BLOCKS : 0n;
+  const oldest = floorBlock !== undefined ? floorBlock : windowFloor;
 
   const ids = new Set<string>();
   let to = head;
@@ -120,6 +126,48 @@ function decodeImageFromTokenUri(tokenUri: string): string | null {
   }
 }
 
+/**
+ * Find every maze this address has solved.
+ *
+ * Prefers `mazesOf(address)` — one view call, complete by construction, and
+ * independent of any RPC's eth_getLogs limits. Deployments predating that
+ * function revert, in which case we fall back to scanning transfer logs.
+ *
+ * Tokens are mint-only — not transferable and not burnable — so an address's
+ * mint history IS its holdings. `mazesOf` needs no filtering.
+ *
+ * The fallback is floored at the contract's deploy block when we know it:
+ * there is no history before deployment, so scanning from there is both
+ * complete and as small as possible. Without that floor the scan uses a fixed
+ * lookback window, which silently loses mints older than the window — the
+ * reason a collection can look empty on an aged deployment, and worse on
+ * fast-block chains where the same block count spans far less time.
+ */
+async function discoverTokenIds(
+  client: PublicClient,
+  contractAddress: `0x${string}`,
+  owner: `0x${string}`,
+  deployBlock: number | undefined
+): Promise<bigint[]> {
+  try {
+    const ids = (await client.readContract({
+      address: contractAddress,
+      abi: MazeKingNFTAbi as never,
+      functionName: 'mazesOf',
+      args: [owner],
+    })) as readonly bigint[];
+    return [...ids];
+  } catch {
+    // Older deployment without enumeration — scan logs instead.
+    return scanIncomingTokenIds(
+      client,
+      contractAddress,
+      owner,
+      deployBlock === undefined ? undefined : BigInt(deployBlock)
+    );
+  }
+}
+
 export function useOwnedMazes(
   enabled: boolean = true
 ): State & { refresh: () => void } {
@@ -159,10 +207,11 @@ export function useOwnedMazes(
       setState((s) => ({ ...s, loading: true, error: null }));
 
       try {
-        const tokenIds = await scanIncomingTokenIds(
+        const tokenIds = await discoverTokenIds(
           publicClient,
           contractAddress,
-          address
+          address,
+          getContractDeployBlock(chain.id)
         );
         if (cancelled) return;
 
@@ -171,7 +220,8 @@ export function useOwnedMazes(
           return;
         }
 
-        // Filter to actually-held tokens (could've been transferred away),
+        // Filter to actually-held tokens. Tokens are soulbound, so the only
+        // way an entry here is no longer held is that the solver burned it.
         // and fetch each tokenURI in parallel.
         const balances = await publicClient.multicall({
           contracts: tokenIds.map((id) => ({

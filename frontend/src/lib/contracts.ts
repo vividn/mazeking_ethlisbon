@@ -19,6 +19,8 @@ type AddressMap = Record<
     verifier: `0x${string}`;
     renderer?: `0x${string}`;
     badgeAwarder?: `0x${string}`;
+    /** Block the contracts were deployed at, when the deploy recorded it. */
+    deployBlock?: number;
   }
 >;
 
@@ -41,6 +43,17 @@ export function getContractAddress(
   contract: ContractType
 ): `0x${string}` | undefined {
   return CONTRACT_ADDRESSES[chainId]?.[contract];
+}
+
+/**
+ * Block the contracts were deployed at, when the deploy recorded it.
+ *
+ * Used as the floor for transfer-log scans: nothing exists before deployment,
+ * so this makes a scan both complete and as small as it can be — no archival
+ * node, no fixed lookback window that silently drops older mints.
+ */
+export function getContractDeployBlock(chainId: number): number | undefined {
+  return CONTRACT_ADDRESSES[chainId]?.deployBlock;
 }
 
 export function areContractsDeployed(chainId: number): boolean {
