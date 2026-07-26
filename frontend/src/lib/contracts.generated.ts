@@ -12,12 +12,13 @@
 
 export const CONTRACT_ADDRESSES: Record<
   number,
-  { nft: `0x${string}`; verifier: `0x${string}`; renderer?: `0x${string}`; badgeAwarder?: `0x${string}` }
+  { nft: `0x${string}`; verifier: `0x${string}`; renderer?: `0x${string}`; badgeAwarder?: `0x${string}`; deployBlock?: number }
 > = {
   11155111: {
-    nft: '0x11352976b12ffe1c4baF9058B89BD763a2A10776',
-    verifier: '0x9365E391E2719fD144bFCd60eE895164dF91B80D',
-    renderer: '0xe376aB06415fB6D991B91C0bc24E96a16F2c68b0',
-    badgeAwarder: '0x819C4D50806739Dee848F4Af5952b1cC34b8DF40',
+    nft: '0x386B5eBc88693648c584D28694236238b1876426',
+    verifier: '0x286D34F93DD87506726155f20208f823211b4A28',
+    renderer: '0x154c13e304C94452dD9c00AC799707305C15121A',
+    badgeAwarder: '0x5ee3fa7914e9a43de13E7438cDf2ecF8C4fd6bCc',
+    deployBlock: 11351745,
   },
 };
