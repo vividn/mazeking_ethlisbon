@@ -205,6 +205,32 @@ export function MazeCanvas({
   // sprite helpers fall back to the procedural patterns until then.
   const glyphImages = useGlyphImages();
 
+  // Observed size of the container the canvas fills. The paint effect below
+  // depends on it, so any change to the container's box re-measures and
+  // repaints. That covers two cases a `window` resize listener cannot:
+  //
+  //  - the container is resized without the window being resized;
+  //  - the container goes from zero-sized to laid out, which is what happens
+  //    when a subtree mounted under `display: none` is later revealed. The
+  //    router keeps the game mounted and hidden while the directions screen
+  //    is showing, so the first measurement is 0x0 and the reveal is the only
+  //    signal that a real measurement is now possible.
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      const { width, height } = container.getBoundingClientRect();
+      setContainerSize((prev) =>
+        prev.width === width && prev.height === height
+          ? prev
+          : { width, height }
+      );
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -727,18 +753,8 @@ export function MazeCanvas({
     showKinglyHint,
     glyphImages,
     containerRef,
+    containerSize,
   ]);
-
-  // Handle window resize - force re-render by changing a counter
-  const [, setResizeCount] = useState(0);
-  useEffect(() => {
-    const handleResize = () => {
-      setResizeCount((c) => c + 1);
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   return (
     <canvas
