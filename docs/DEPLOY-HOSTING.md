@@ -128,6 +128,12 @@ The application UUID is in **IAM → Applications**; the API key's detail page
 also shows which principal owns it. Note the Scaleway shape: resources are bare
 bucket names, not ARNs.
 
+**Enabling bucket website rewrites the bucket policy.** Scaleway applies its own
+default policy when website hosting is switched on, silently discarding any
+statement added beforehand — including the one granting the deploying
+application. Configure the website *first*, then apply the policy, and re-check
+the policy after any later change to website settings.
+
 **To unblock immediately**, deleting the bucket policy restores IAM-based
 access — at the cost of the site not being publicly readable until a corrected
 policy is applied.
