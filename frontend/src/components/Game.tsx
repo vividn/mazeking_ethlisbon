@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { isDebugSeedActive } from '../lib/debugSeed';
+import { serializeForZk } from '../lib/zkSerialize';
+import { serializeLayoutBytes } from '../lib/tokenId';
+import { useOfficialLayout } from '../hooks/useOfficialLayout';
 import { Maze, type MazeHandle } from './Maze';
 import { Controls } from './Controls';
 import { WinModal } from './WinModal';
@@ -45,6 +48,7 @@ interface GameProps {
 }
 
 export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
+  // Declared before the state hook so the reconciliation below can read it.
   const navigate = useNavigate();
   const mazeRef = useRef<MazeHandle>(null);
   const isMobile = useIsMobile();
@@ -63,6 +67,44 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
     handleMove,
     handlePlayAgain,
   } = useGameState({ initialSeed, onSeedChange, replay });
+  // The canonical bytes of the maze we generated locally, so they can be
+  // compared with the registered ones. Same serialisation the proof commits
+  // to, or the comparison would be against something the chain never saw.
+  const localLayout = useMemo(() => {
+    if (!maze || !initialPositions) return null;
+    const zk = serializeForZk(
+      maze,
+      initialPositions.startPos,
+      initialPositions.robePos,
+      initialPositions.scepterPos,
+      initialPositions.goalPos
+    );
+    return serializeLayoutBytes(zk);
+  }, [maze, initialPositions]);
+
+  const layoutCheck = useOfficialLayout(replay ? null : seed, localLayout);
+  const [officialDeclined, setOfficialDeclined] = useState(false);
+
+  const switchToOfficial = useCallback(() => {
+    if (layoutCheck.state !== 'differs') return;
+    initFromReplay({
+      layout: layoutCheck.official,
+      tokenId: layoutCheck.tokenId,
+      seed,
+    });
+  }, [layoutCheck, initFromReplay, seed]);
+
+  // Before the first move there is nothing to lose, so the registered maze
+  // simply takes over. Once someone is playing, swapping the walls underneath
+  // them would be worse than the divergence itself -- so they are told, and
+  // they choose.
+  const untouched = (gameState?.moveCount ?? 0) === 0;
+  useEffect(() => {
+    if (layoutCheck.state === 'differs' && untouched) {
+      switchToOfficial();
+    }
+  }, [layoutCheck.state, untouched, switchToOfficial]);
+
   const [seedBarOpen, setSeedBarOpen] = useState(false);
   const [historySidebarOpen, setHistorySidebarOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -582,6 +624,32 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
         />
       )}
 
+      {layoutCheck.state === 'differs' && !untouched && !officialDeclined && (
+        <div role="alert" style={styles.layoutWarning}>
+          <strong>This is not the registered maze.</strong>
+          <span>
+            The maze generated here does not match the one recorded on chain
+            under this name. Your solve would be proved against a maze that is
+            not the one on the leaderboard, and would mint a different token.
+          </span>
+          <div style={styles.layoutWarningActions}>
+            <button
+              style={styles.layoutWarningButton}
+              onClick={switchToOfficial}
+              data-testid="switch-to-official"
+            >
+              Switch to the registered maze
+            </button>
+            <button
+              style={{ ...styles.layoutWarningButton, opacity: 0.7 }}
+              onClick={() => setOfficialDeclined(true)}
+            >
+              Keep playing this one
+            </button>
+          </div>
+        </div>
+      )}
+
       <WinModal
         isOpen={gameState.gameWon && !winModalDismissed}
         moveCount={gameState.moveCount}
@@ -607,6 +675,42 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  layoutWarning: {
+    position: 'fixed',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    bottom: '20px',
+    zIndex: 60,
+    maxWidth: 'min(560px, calc(100vw - 32px))',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '14px 16px',
+    borderRadius: '10px',
+    border: '1px solid rgba(255, 140, 80, 0.7)',
+    backgroundColor: 'rgba(40, 20, 10, 0.96)',
+    color: '#ffd9c0',
+    fontSize: '13px',
+    lineHeight: 1.45,
+    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
+  },
+  layoutWarningActions: {
+    display: 'flex',
+    gap: '8px',
+    flexWrap: 'wrap',
+    marginTop: '2px',
+  },
+  layoutWarningButton: {
+    padding: '7px 12px',
+    fontSize: '12px',
+    fontWeight: 700,
+    fontFamily: 'inherit',
+    borderRadius: '6px',
+    border: '1px solid rgba(255, 180, 140, 0.8)',
+    background: 'transparent',
+    color: 'inherit',
+    cursor: 'pointer',
+  },
   container: {
     display: 'flex',
     flexDirection: 'column',
