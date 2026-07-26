@@ -696,6 +696,79 @@ contract MazeKingNFTTest is Test {
         assertEq(badges & nft.BADGE_COPPER(), 0);
     }
 
+    function test_MintWithProof_AwardsBugCrownBelowOptimum() public {
+        // A solve shorter than the optimum is impossible if the optimum is
+        // right, so this badge doubles as an on-chain bug report. It used to
+        // fall through the awarder earning nothing at all.
+        DefaultBadgeAwarder awarder = new DefaultBadgeAwarder(address(nft));
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.startPrank(owner);
+        nft.setBadgeAwarder(address(awarder));
+        nft.setOptimalMoves(tokenId, 100);
+        vm.stopPrank();
+
+        vm.prank(user);
+        nft.mintWithProof(hex"00", mazeHash, layout, 99, false);
+
+        (,, uint32 badges,) = nft.stats(tokenId, user);
+        assertEq(badges & nft.BADGE_BUG(), nft.BADGE_BUG());
+        // It is not also a perfect solve, nor any medal: those all describe a
+        // solve the optimum explains, and this one does not.
+        assertEq(badges & nft.BADGE_ROBOT(), 0);
+        assertEq(badges & nft.BADGE_GOLD(), 0);
+        assertEq(badges & nft.BADGE_SILVER(), 0);
+        assertEq(badges & nft.BADGE_COPPER(), 0);
+    }
+
+    function test_MintWithProof_NoBugCrownOnAnHonestSolve() public {
+        // The crown must stay unearnable while the optimum holds. Exactly
+        // optimal is the boundary and the one most likely to be got wrong.
+        DefaultBadgeAwarder awarder = new DefaultBadgeAwarder(address(nft));
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.startPrank(owner);
+        nft.setBadgeAwarder(address(awarder));
+        nft.setOptimalMoves(tokenId, 100);
+        vm.stopPrank();
+
+        vm.prank(user);
+        nft.mintWithProof(hex"00", mazeHash, layout, 100, false);
+
+        (,, uint32 badges,) = nft.stats(tokenId, user);
+        assertEq(badges & nft.BADGE_BUG(), 0);
+        assertEq(badges & nft.BADGE_ROBOT(), nft.BADGE_ROBOT());
+    }
+
+    function test_MintWithProof_NoBugCrownWhenOptimumUnknown() public {
+        // With no registered optimum there is no claim to disprove, so an
+        // unregistered maze must not hand out the crown for any move count.
+        DefaultBadgeAwarder awarder = new DefaultBadgeAwarder(address(nft));
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(owner);
+        nft.setBadgeAwarder(address(awarder));
+
+        vm.prank(user);
+        nft.mintWithProof(hex"00", mazeHash, layout, 1, false);
+
+        (,, uint32 badges,) = nft.stats(tokenId, user);
+        assertEq(badges & nft.BADGE_BUG(), 0);
+    }
+
+    function test_BadgeBug_DoesNotCollideWithOtherBadges() public view {
+        // Each badge is a distinct bit; a collision would silently award two.
+        uint32 others = nft.BADGE_REGISTERED() | nft.BADGE_ROBOT() | nft.BADGE_GOLD()
+            | nft.BADGE_SILVER() | nft.BADGE_COPPER() | nft.BADGE_STONE();
+        assertEq(nft.BADGE_BUG() & others, 0);
+    }
+
     function test_MintWithProof_AwardsGold() public {
         DefaultBadgeAwarder awarder = new DefaultBadgeAwarder(address(nft));
         bytes memory layout = _mockLayout();

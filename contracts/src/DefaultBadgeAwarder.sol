@@ -14,11 +14,12 @@ interface IMazeKingBadgeView {
     function BADGE_SILVER() external view returns (uint32);
     function BADGE_COPPER() external view returns (uint32);
     function BADGE_STONE() external view returns (uint32);
+    function BADGE_BUG() external view returns (uint32);
 }
 
 /// @title DefaultBadgeAwarder
-/// @notice Ships the 6 basic MazeKing badges:
-///         REGISTERED, ROBOT, GOLD, SILVER, COPPER, STONE
+/// @notice Ships the 7 basic MazeKing badges:
+///         REGISTERED, ROBOT, GOLD, SILVER, COPPER, STONE, BUG
 /// @dev Pure-stateless strategy: reads admin-set state from the NFT contract.
 ///      Replaceable via MazeKingNFT.setBadgeAwarder for future strategies.
 contract DefaultBadgeAwarder is IBadgeAwarder {
@@ -41,9 +42,19 @@ contract DefaultBadgeAwarder is IBadgeAwarder {
 
         uint32 optimal = nft.optimalMoves(mazeHash);
         if (optimal > 0) {
-            if (moveCount == optimal) {
+            if (moveCount < optimal) {
+                // Unreachable if the optimum is right: it is a breadth-first
+                // search over the product graph (x, y, hasRobe, hasScepter),
+                // so nothing shorter exists. Reaching this branch means the
+                // registrar attested a wrong optimum, and the proof that
+                // arrived here is the counterexample. Award the crown rather
+                // than silently dropping the solve on the floor -- a mint that
+                // disproves our own claim is worth recording, and it used to
+                // fall through this function earning nothing at all.
+                newBadges |= nft.BADGE_BUG();
+            } else if (moveCount == optimal) {
                 newBadges |= nft.BADGE_ROBOT();
-            } else if (moveCount > optimal) {
+            } else {
                 // Tiered medals — highest tier wins (mutually exclusive).
                 // Compare moveCount * 100 against optimal * threshold to avoid
                 // fractional math.

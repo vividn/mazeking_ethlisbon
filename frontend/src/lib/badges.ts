@@ -8,7 +8,8 @@
  *   BADGE_SILVER     = 1 << 3
  *   BADGE_COPPER     = 1 << 4
  *   BADGE_STONE      = 1 << 5
- * Bits 6-31 are reserved on-chain for future achievements.
+ *   BADGE_BUG        = 1 << 6
+ * Bits 7-31 are reserved on-chain for future achievements.
  *
  * Awarding happens in DefaultBadgeAwarder and is gated on the registrar having
  * set `optimalMoves` for the maze — an unregistered maze awards no medals at
@@ -21,6 +22,13 @@ export const BADGE_GOLD = 1 << 2;
 export const BADGE_SILVER = 1 << 3;
 export const BADGE_COPPER = 1 << 4;
 export const BADGE_STONE = 1 << 5;
+/**
+ * Solved in fewer moves than the maze's proven optimum — which cannot happen.
+ * The optimum is a breadth-first search over the product graph, so nothing
+ * shorter exists. If this bit is ever set, the optimum was wrong and the mint
+ * is a bug report. Unearnable by design.
+ */
+export const BADGE_BUG = 1 << 6;
 
 export interface BadgeDef {
   bit: number;
@@ -37,6 +45,16 @@ export interface BadgeDef {
  * apart at the end.
  */
 export const BADGE_DEFS: BadgeDef[] = [
+  {
+    // Above the robot crown deliberately: beating a proof outranks matching it.
+    bit: BADGE_BUG,
+    key: 'bug',
+    label: 'Bug Crown',
+    glyph: '🐛👑',
+    description:
+      'Solved in fewer moves than we proved possible. Either you broke the ' +
+      'maze or we broke the maths. Either way, this one is yours.',
+  },
   {
     bit: BADGE_ROBOT,
     key: 'robot',
@@ -93,13 +111,22 @@ export function hasRobotCrown(badges: number): boolean {
 }
 
 /**
+ * True if the solve beat the optimum we published for this maze.
+ *
+ * Should always be false. It is worth surfacing rather than hiding: a solve
+ * that disproves our own claim is the most interesting thing the contract can
+ * record.
+ */
+export function hasBugCrown(badges: number): boolean {
+  return (badges & BADGE_BUG) !== 0;
+}
+
+/**
  * The single badge that best represents a solve, for compact UI (a card
  * corner, a list row). Returns null when nothing was earned — which is the
  * normal state for a maze whose optimum was never registered.
  */
 export function bestBadge(badges: number): BadgeDef | null {
-  const earned = decodeBadges(badges).filter(
-    (d) => d.bit !== BADGE_REGISTERED
-  );
+  const earned = decodeBadges(badges).filter((d) => d.bit !== BADGE_REGISTERED);
   return earned.length > 0 ? earned[0] : null;
 }

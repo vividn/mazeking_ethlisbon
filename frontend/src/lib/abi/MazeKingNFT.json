@@ -36,6 +36,19 @@
   },
   {
     "type": "function",
+    "name": "BADGE_BUG",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "BADGE_COPPER",
     "inputs": [],
     "outputs": [

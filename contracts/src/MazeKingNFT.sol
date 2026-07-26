@@ -78,7 +78,15 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     uint32 public constant BADGE_SILVER = 1 << 3; // 3. Silver (<1.15x optimal)
     uint32 public constant BADGE_COPPER = 1 << 4; // 4. Copper (<1.25x optimal)
     uint32 public constant BADGE_STONE = 1 << 5; // 5. Stone (max possible moves)
-    // Badges 6-31 reserved for future use (placement, special achievements, etc.)
+    /// @notice Awarded for solving a maze in fewer moves than its proven optimum.
+    /// @dev Which is impossible. The optimum comes from a breadth-first search
+    ///      over the product graph (x, y, hasRobe, hasScepter), so no shorter
+    ///      solution exists. If this badge is ever awarded, the registrar's
+    ///      optimum was wrong -- and the mint is a bug report, permanently and
+    ///      publicly recorded on chain. Unearnable by design; a trophy for
+    ///      whoever proves us wrong.
+    uint32 public constant BADGE_BUG = 1 << 6; // 6. Bug crown (below the proven optimum)
+    // Badges 7-31 reserved for future use (placement, special achievements, etc.)
 
     /// @dev Maze tokens are mint-only. Transferring would hand over a claim the
     ///      recipient did not earn; burning would destroy the solver's own

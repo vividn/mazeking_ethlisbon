@@ -11,8 +11,10 @@ import {
   BADGE_SILVER,
   BADGE_COPPER,
   BADGE_STONE,
+  BADGE_BUG,
   decodeBadges,
   hasRobotCrown,
+  hasBugCrown,
   bestBadge,
 } from '../badges';
 
@@ -25,6 +27,7 @@ describe('badge bits', () => {
     expect(BADGE_SILVER).toBe(8);
     expect(BADGE_COPPER).toBe(16);
     expect(BADGE_STONE).toBe(32);
+    expect(BADGE_BUG).toBe(64);
   });
 });
 
@@ -42,9 +45,29 @@ describe('decodeBadges', () => {
     expect(keys).toHaveLength(2);
   });
 
-  it('ignores reserved bits 6-31', () => {
+  it('ignores reserved bits 7-31', () => {
     const keys = decodeBadges(BADGE_ROBOT | (1 << 9)).map((b) => b.key);
     expect(keys).toEqual(['robot']);
+  });
+
+  it('ranks the bug crown above the robot crown', () => {
+    // Beating a proof outranks matching it, so it must lead the row.
+    const keys = decodeBadges(BADGE_BUG | BADGE_ROBOT).map((b) => b.key);
+    expect(keys[0]).toBe('bug');
+  });
+});
+
+describe('hasBugCrown', () => {
+  it('detects a solve that beat the published optimum', () => {
+    expect(hasBugCrown(BADGE_BUG)).toBe(true);
+    expect(hasBugCrown(BADGE_REGISTERED | BADGE_BUG)).toBe(true);
+  });
+
+  it('stays false for every honest solve', () => {
+    // It should never fire in practice; that is the point of it.
+    expect(hasBugCrown(BADGE_ROBOT)).toBe(false);
+    expect(hasBugCrown(BADGE_GOLD | BADGE_REGISTERED)).toBe(false);
+    expect(hasBugCrown(0)).toBe(false);
   });
 });
 
