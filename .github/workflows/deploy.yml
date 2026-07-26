@@ -81,6 +81,47 @@ jobs:
           aws configure set aws_secret_access_key "$SCW_SECRET_ACCESS_KEY"
           aws configure set default.region        "${SCW_REGION:-fr-par}"
 
+      # `aws s3 sync` lists the destination to compute its diff, so the first
+      # thing it does is ListObjectsV2. When that is denied the CLI reports a
+      # bare "AccessDenied" with no indication of which of several unrelated
+      # causes applies. This step separates them.
+      - name: Preflight — verify bucket access
+        env:
+          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ secrets.SCW_REGION }}
+        run: |
+          set -uo pipefail
+          REGION="${SCW_REGION:-fr-par}"
+          ENDPOINT="https://s3.${REGION}.scw.cloud"
+          echo "bucket   : '${SCW_BUCKET}'"
+          echo "region   : '${REGION}'"
+          echo "endpoint : ${ENDPOINT}"
+
+          case "$SCW_BUCKET" in
+            s3://*) echo "::error::SCW_BUCKET must be the bare bucket name, without the s3:// prefix." ; exit 1 ;;
+            *" "*)  echo "::error::SCW_BUCKET contains whitespace." ; exit 1 ;;
+          esac
+
+          echo "--- head-bucket (exists + reachable in this region?) ---"
+          if ! aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1; then
+            echo "::error::head-bucket failed. Most likely: the bucket lives in a different region than '${REGION}', or the API key belongs to a different Scaleway project than the bucket. Scaleway keys are project-scoped, and a cross-region or cross-project request returns AccessDenied rather than NotFound."
+            exit 1
+          fi
+
+          echo "--- list-objects (the call sync makes first) ---"
+          if ! aws s3api list-objects-v2 --bucket "$SCW_BUCKET" --max-items 1 --endpoint-url "$ENDPOINT" 2>&1; then
+            echo "::error::The bucket is reachable but listing is denied, so the key lacks s3:ListBucket. Grant the API key ObjectStorage read+write on the project owning this bucket. Alternatively the upload can be switched from 'aws s3 sync' to 'aws s3 cp --recursive', which needs only PutObject — assets are content-hashed, so nothing depends on sync's diffing."
+            exit 1
+          fi
+
+          echo "--- write probe ---"
+          if ! echo ok | aws s3 cp - "s3://${SCW_BUCKET}/.deploy-preflight" --endpoint-url "$ENDPOINT" 2>&1; then
+            echo "::error::Listing works but writing is denied. The API key needs write access, not just read."
+            exit 1
+          fi
+          aws s3 rm "s3://${SCW_BUCKET}/.deploy-preflight" --endpoint-url "$ENDPOINT" >/dev/null 2>&1 || true
+          echo "preflight OK"
+
       # Upload order is deliberate: assets first, index.html last. index.html
       # names hashed asset files, so publishing it before its assets exist
       # would serve a broken page for the length of the upload.
