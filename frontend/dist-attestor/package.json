@@ -1,0 +1,13 @@
+{
+  "name": "mazeking-attestor",
+  "private": true,
+  "type": "module",
+  "main": "handler.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "viem": "^2.48.8",
+    "@aztec/bb.js": "2.1.9"
+  }
+}

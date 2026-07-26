@@ -7,6 +7,7 @@ import { MazeKingNFT } from "../src/MazeKingNFT.sol";
 import { DefaultBadgeAwarder } from "../src/DefaultBadgeAwarder.sol";
 import { MazeRenderer } from "../src/MazeRenderer.sol";
 import { HonkVerifier } from "../src/generated/MazeVerifier.sol";
+import { MazeKingResolver } from "../src/MazeKingResolver.sol";
 
 /**
  * @title DeployScript
@@ -22,17 +23,22 @@ import { HonkVerifier } from "../src/generated/MazeVerifier.sol";
  *       --private-key $PRIVATE_KEY --broadcast --verify
  */
 contract DeployScript is Script {
-    function run()
-        external
-        returns (address verifier, address nft, address awarder, address renderer)
-    {
+    function run() external {
+        Addresses memory a;
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
+        a.deployer = vm.addr(deployerPrivateKey);
+
+        // Who ends up holding the roles. Defaults to the deployer, but a
+        // production deploy should hand them to a wallet and let the deploy
+        // key be disposable -- there is then no moment where a key that
+        // touched a script or a CI variable controls the contract.
+        address owner = vm.envOr("OWNER", a.deployer);
 
         console.log("==================================================");
         console.log("Deploying MazeKing Contracts");
         console.log("==================================================");
-        console.log("Deployer:", deployer);
+        console.log("Deployer:", a.deployer);
+        console.log("Owner:", owner);
         console.log("Chain ID:", block.chainid);
         console.log("");
 
@@ -41,36 +47,72 @@ contract DeployScript is Script {
         // Step 1: Deploy Verifier
         console.log("Deploying HonkVerifier...");
         HonkVerifier verifierContract = new HonkVerifier();
-        verifier = address(verifierContract);
-        console.log("HonkVerifier deployed at:", verifier);
+        a.verifier = address(verifierContract);
+        console.log("HonkVerifier deployed at:", a.verifier);
         console.log("");
 
         // Step 2: Deploy NFT
         console.log("Deploying MazeKingNFT...");
         MazeKingNFT nftContract = new MazeKingNFT(
-            "MazeKing", "MAZE", "https://api.mazeking.xyz/token/", deployer, verifier
+            "MazeKing", "MAZE", "https://api.mazeking.xyz/token/", a.deployer, a.verifier
         );
-        nft = address(nftContract);
-        console.log("MazeKingNFT deployed at:", nft);
+        a.nft = address(nftContract);
+        console.log("MazeKingNFT deployed at:", a.nft);
         console.log("");
 
         // Step 3: Deploy default badge awarder and wire it
         console.log("Deploying DefaultBadgeAwarder...");
-        DefaultBadgeAwarder awarderContract = new DefaultBadgeAwarder(nft);
-        awarder = address(awarderContract);
-        console.log("DefaultBadgeAwarder deployed at:", awarder);
-        nftContract.setBadgeAwarder(awarder);
+        DefaultBadgeAwarder awarderContract = new DefaultBadgeAwarder(a.nft);
+        a.awarder = address(awarderContract);
+        console.log("DefaultBadgeAwarder deployed at:", a.awarder);
+        nftContract.setBadgeAwarder(a.awarder);
         console.log("Wired badge awarder on NFT");
         console.log("");
 
         // Step 4: Deploy on-chain SVG renderer and wire it
         console.log("Deploying MazeRenderer...");
         MazeRenderer rendererContract = new MazeRenderer();
-        renderer = address(rendererContract);
-        console.log("MazeRenderer deployed at:", renderer);
-        nftContract.setRenderer(renderer);
+        a.renderer = address(rendererContract);
+        console.log("MazeRenderer deployed at:", a.renderer);
+        nftContract.setRenderer(a.renderer);
         console.log("Wired renderer on NFT");
         console.log("");
+
+        // Step 5: Deploy the ENS wildcard resolver.
+        //
+        // Coin type 60 is the mainnet address record; ENSIP-11 defines
+        // `0x80000000 | chainId` for everything else. Reporting an L2
+        // contract under coin type 60 would invite transfers to an address
+        // holding no contract on mainnet, and those funds are unrecoverable.
+        uint256 coinType = block.chainid == 1 ? 60 : (0x80000000 | block.chainid);
+        console.log("Deploying MazeKingResolver...");
+        MazeKingResolver resolverContract =
+            new MazeKingResolver(owner, a.nft, coinType, "https://mazeking.io/s/", 2);
+        a.resolver = address(resolverContract);
+        console.log("MazeKingResolver deployed at:", a.resolver);
+        console.log("Coin type:", coinType);
+        console.log("");
+
+        // Step 6: Hand the contract to its owner.
+        //
+        // Must come last. Every wiring call above needs OWNER_ROLE, so the
+        // deployer keeps it until the wiring is done and only then gives it up.
+        if (owner != a.deployer) {
+            console.log("Transferring roles to owner...");
+            nftContract.grantRole(nftContract.DEFAULT_ADMIN_ROLE(), owner);
+            nftContract.grantRole(nftContract.OWNER_ROLE(), owner);
+            nftContract.grantRole(nftContract.REGISTRAR_ROLE(), owner);
+            nftContract.grantRole(nftContract.WITHDRAWER_ROLE(), owner);
+
+            // DEFAULT_ADMIN_ROLE is what makes the others renounceable, so it
+            // goes last.
+            nftContract.renounceRole(nftContract.WITHDRAWER_ROLE(), a.deployer);
+            nftContract.renounceRole(nftContract.REGISTRAR_ROLE(), a.deployer);
+            nftContract.renounceRole(nftContract.OWNER_ROLE(), a.deployer);
+            nftContract.renounceRole(nftContract.DEFAULT_ADMIN_ROLE(), a.deployer);
+            console.log("Deployer holds no roles; the owner holds all of them.");
+            console.log("");
+        }
 
         vm.stopBroadcast();
 
@@ -78,11 +120,12 @@ contract DeployScript is Script {
         console.log("==================================================");
         console.log("Deployment Complete");
         console.log("==================================================");
-        console.log("Verifier:", verifier);
-        console.log("NFT:", nft);
-        console.log("BadgeAwarder:", awarder);
-        console.log("Renderer:", renderer);
-        console.log("Owner:", deployer);
+        console.log("Verifier:", a.verifier);
+        console.log("NFT:", a.nft);
+        console.log("BadgeAwarder:", a.awarder);
+        console.log("Renderer:", a.renderer);
+        console.log("Resolver:", a.resolver);
+        console.log("Owner:", owner);
         console.log("");
 
         // Save to JSON file for frontend
@@ -97,34 +140,7 @@ contract DeployScript is Script {
             vm.ffi(mkdirInputs);
         }
 
-        string memory json = string.concat(
-            "{\n",
-            '  "chainId": ',
-            vm.toString(block.chainid),
-            ",\n",
-            '  "verifier": "',
-            vm.toString(verifier),
-            '",\n',
-            '  "nft": "',
-            vm.toString(nft),
-            '",\n',
-            '  "badgeAwarder": "',
-            vm.toString(awarder),
-            '",\n',
-            '  "renderer": "',
-            vm.toString(renderer),
-            '",\n',
-            '  "deployer": "',
-            vm.toString(deployer),
-            '",\n',
-            '  "deployBlock": ',
-            vm.toString(block.number),
-            ",\n",
-            '  "timestamp": ',
-            vm.toString(block.timestamp),
-            "\n",
-            "}"
-        );
+        string memory json = _deploymentJson(a);
 
         string memory filepath =
             string.concat(deploymentsDir, "/", vm.toString(block.chainid), ".json");
@@ -136,5 +152,51 @@ contract DeployScript is Script {
         string memory latestPath = string.concat(deploymentsDir, "/latest.json");
         vm.writeFile(latestPath, json);
         console.log("Also saved as:", latestPath);
+    }
+
+    /// @dev Grouped so building the deployment file does not need every address
+    ///      live on the stack at once, which the EVM cannot manage alongside
+    ///      five named return values.
+    struct Addresses {
+        address verifier;
+        address nft;
+        address awarder;
+        address renderer;
+        address resolver;
+        address deployer;
+    }
+
+    function _deploymentJson(Addresses memory a) internal view returns (string memory) {
+        return string.concat(
+            "{\n",
+            '  "chainId": ',
+            vm.toString(block.chainid),
+            ",\n",
+            '  "verifier": "',
+            vm.toString(a.verifier),
+            '",\n',
+            '  "nft": "',
+            vm.toString(a.nft),
+            '",\n',
+            '  "badgeAwarder": "',
+            vm.toString(a.awarder),
+            '",\n',
+            '  "renderer": "',
+            vm.toString(a.renderer),
+            '",\n',
+            '  "resolver": "',
+            vm.toString(a.resolver),
+            '",\n',
+            '  "deployer": "',
+            vm.toString(a.deployer),
+            '",\n',
+            '  "deployBlock": ',
+            vm.toString(block.number),
+            ",\n",
+            '  "timestamp": ',
+            vm.toString(block.timestamp),
+            "\n",
+            "}"
+        );
     }
 }
