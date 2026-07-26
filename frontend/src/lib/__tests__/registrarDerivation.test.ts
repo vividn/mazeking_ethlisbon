@@ -10,7 +10,7 @@
  * optimum computed from a *different* maze than the one players actually play.
  */
 import { describe, it, expect } from 'vitest';
-import { deriveMaze } from '../../../scripts/register-maze';
+import { deriveMaze } from '../../../scripts/derive-maze';
 
 const SEEDS = ['Zero Knowledge', 'Merkle Tree', 'SNARK'];
 

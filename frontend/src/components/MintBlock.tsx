@@ -94,6 +94,12 @@ interface MintBlockProps {
   startProofGeneration: () => Promise<void>;
   resetProof: () => void;
   mockMode: boolean;
+  /**
+   * The seed this maze grew from. Passed on to the mint so a registrar
+   * attestation can be fetched for it; absent, the mint simply goes
+   * unattested and no badges are awarded.
+   */
+  seed?: string | null;
   /** Rendered in the button column below the mint button + errors. */
   children?: React.ReactNode;
 }
@@ -105,6 +111,7 @@ export function MintBlock({
   startProofGeneration,
   resetProof,
   mockMode,
+  seed,
   children,
 }: MintBlockProps) {
   const { address, isConnected, chain } = useAccount();
@@ -180,7 +187,8 @@ export function MintBlock({
         proofState.mazeHash,
         proofState.layoutBytes,
         moveCount,
-        proofBinding === 'bearer'
+        proofBinding === 'bearer',
+        seed ?? undefined
       );
     } catch (err) {
       console.error('mintWithProof threw:', err);
@@ -333,7 +341,15 @@ export function MintBlock({
 
   return (
     <div style={boxStyle} data-testid="proof-actions-box">
-      <div className="win-proof-row" style={{ ...proofBoxInnerStyle, flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+      <div
+        className="win-proof-row"
+        style={{
+          ...proofBoxInnerStyle,
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '10px',
+        }}
+      >
         <div className="win-proof-column" style={proofColumnStyle}>
           {proofReady && proofState.imageDataUrl && proofState.proof ? (
             <ProofImage
@@ -367,7 +383,9 @@ export function MintBlock({
           )}
         </div>
 
-        <div style={{ ...buttonColumnStyle, width: '100%', alignItems: 'stretch' }}>
+        <div
+          style={{ ...buttonColumnStyle, width: '100%', alignItems: 'stretch' }}
+        >
           {/* Generating the proof is the first action and belongs directly
               under the window it fills, rather than inside the placeholder
               where it read as part of the artwork. */}

@@ -593,6 +593,7 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
         robePos={initialPositions.robePos}
         scepterPos={initialPositions.scepterPos}
         goalPos={initialPositions.goalPos}
+        seed={seed}
       />
 
       <HistorySidebar

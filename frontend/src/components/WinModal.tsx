@@ -17,6 +17,8 @@ interface WinModalProps {
   goalPos: Position;
   /** Close the modal (e.g. via Escape or backdrop). */
   onDismiss: () => void;
+  /** The seed this maze grew from, used to request a registrar attestation. */
+  seed?: string | null;
   /**
    * When true, useZkProof runs in mock mode (4s timeout, random 9088-byte
    * proof). Used by the localhost DEBUG button. Mint button is rendered but
@@ -143,6 +145,7 @@ export function WinModal({
   goalPos,
   onDismiss,
   mockMode = false,
+  seed,
 }: WinModalProps) {
   const {
     state: proofState,
@@ -151,7 +154,6 @@ export function WinModal({
   } = useZkProof(maze, moves, startPos, robePos, scepterPos, goalPos, {
     mockMode,
   });
-
 
   // Escape closes the modal. Skip while a real proof is mid-flight so we
   // don't tear down the in-flight pipeline mid-keypress.
@@ -261,11 +263,6 @@ export function WinModal({
     color: colors.wallColor,
     fontStyle: 'italic',
   };
-
-
-
-
-
 
   return (
     <>
@@ -399,6 +396,7 @@ export function WinModal({
             startProofGeneration={startProofGeneration}
             resetProof={resetProof}
             mockMode={mockMode}
+            seed={seed}
           />
         </div>
       </div>

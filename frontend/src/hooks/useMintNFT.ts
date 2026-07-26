@@ -14,16 +14,27 @@ import {
 } from 'viem';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
 import { getContractAddress } from '../lib/contracts';
+import {
+  fetchAttestation,
+  attestationMatchesLayout,
+  type Attestation,
+} from '../lib/attestation';
 
 /**
  * Hook to mint an NFT under the hash-as-public-input architecture
  * (ma-6cr.6). The on-chain signature is now:
  *
- *   mintWithProof(bytes proof, bytes32 mazeHash, bytes layout, uint16 moveCount, bool bearer)
+ *   mintWithProof(bytes proof, bytes32 mazeHash, bytes layout, uint16 moveCount,
+ *                 bool bearer, uint32 attestedOptimalMoves, bytes attestation)
  *
  * `mazeHash` is the Pedersen hash of the canonical layout (computed via
  * bb.js — that wiring lives in ma-6cr.8). `layout` is the canonical bytes
  * the same hash is computed over.
+ *
+ * The last two arguments carry a registrar attestation when one is available,
+ * which registers the maze in the same transaction and so lets it award
+ * badges. Passing an empty signature skips registration, which is what happens
+ * whenever no attestor is configured or reachable.
  */
 export function useMintNFT() {
   const { address, chain } = useAccount();
@@ -64,7 +75,13 @@ export function useMintNFT() {
      * contract then verifies against the zero sentinel instead of msg.sender,
      * which makes the proof copyable — opt-in only.
      */
-    bearer: boolean = false
+    bearer: boolean = false,
+    /**
+     * The seed this maze grew from. Only used to ask the registrar for an
+     * attestation; the maze's identity on chain is still its hash, never its
+     * seed.
+     */
+    seed?: string
   ) => {
     setSimulateError(null);
 
@@ -82,6 +99,22 @@ export function useMintNFT() {
       setSimulateError(err);
       throw err;
     }
+
+    // Ask for an attestation before simulating, so a maze nobody pre-registered
+    // can still be registered by this very transaction and award its badges.
+    // Every failure path here returns null and mints unattested.
+    let attestation: Attestation | null = null;
+    if (seed) {
+      attestation = await fetchAttestation(seed, chain.id, nftAddress);
+      if (attestation && !attestationMatchesLayout(attestation, layout)) {
+        console.warn(
+          'registrar attested a different layout for this seed; minting unattested'
+        );
+        attestation = null;
+      }
+    }
+    const attestedOptimalMoves = attestation?.optimalMoves ?? 0;
+    const attestationSig = attestation?.signature ?? '0x';
 
     const proofHex = `0x${Array.from(proof)
       .map((b) => b.toString(16).padStart(2, '0'))
@@ -112,7 +145,15 @@ export function useMintNFT() {
           address: nftAddress,
           abi: MazeKingNFTAbi,
           functionName: 'mintWithProof',
-          args: [proofHex, mazeHash, layoutHex, moveCount, bearer],
+          args: [
+            proofHex,
+            mazeHash,
+            layoutHex,
+            moveCount,
+            bearer,
+            attestedOptimalMoves,
+            attestationSig,
+          ],
         });
       } catch (simErr) {
         const reason =
@@ -132,7 +173,15 @@ export function useMintNFT() {
       address: nftAddress,
       abi: MazeKingNFTAbi,
       functionName: 'mintWithProof',
-      args: [proofHex, mazeHash, layoutHex, moveCount, bearer],
+      args: [
+        proofHex,
+        mazeHash,
+        layoutHex,
+        moveCount,
+        bearer,
+        attestedOptimalMoves,
+        attestationSig,
+      ],
     });
   };
 

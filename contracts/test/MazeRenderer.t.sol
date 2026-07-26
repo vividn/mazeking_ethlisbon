@@ -585,7 +585,7 @@ contract MazeRendererTest is Test {
         uint256 tokenId = uint256(mazeHash);
 
         vm.prank(user);
-        nft.mintWithProof(hex"00", mazeHash, layoutB, 50, false);
+        nft.mintWithProof(hex"00", mazeHash, layoutB, 50, false, 0, "");
 
         // Mint succeeded.
         assertEq(nft.balanceOf(user, tokenId), 1, "mint should succeed despite mismatch");
