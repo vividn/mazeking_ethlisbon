@@ -169,8 +169,11 @@ jobs:
           if LB=$(aws s3api list-buckets --endpoint-url "$ENDPOINT" 2>&1); then
             echo "credential is VALID — these buckets are visible to it:"
             echo "$LB" | grep -oE '"Name": "[^"]+"' | head -20
+            echo "--- bucket policy actually in force ---"
+            aws s3api get-bucket-policy --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" \
+              --query Policy --output text 2>&1 | head -40 || true
             echo "::endgroup::"
-            echo "::error::The credential works, but '${SCW_BUCKET}' is not writable by it. Compare the name above against SCW_BUCKET_NAME, and confirm the bucket sits in the project this key's policy is scoped to."
+            echo "::error::The credential is valid and can see '${SCW_BUCKET}', but cannot write to it. On Scaleway a bucket policy overrides IAM, so compare the policy printed above against the caller: it must contain a statement whose Principal is the application_id owning this API key (a user_id statement grants a person, not a CI key), and whose Resource lists this exact bucket name and its /* form. Deleting the bucket policy restores IAM-based access immediately if a faster unblock is wanted."
             exit 1
           fi
           echo "credential REJECTED for list-buckets as well:"
