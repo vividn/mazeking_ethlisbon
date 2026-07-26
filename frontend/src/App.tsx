@@ -16,6 +16,7 @@ import { MyMazesPage } from './components/MyMazesPage';
 import { GalleryPage } from './components/GalleryPage';
 import { TestnetBanner } from './components/TestnetBanner';
 import { DebugWinModalButton } from './components/DebugWinModalButton';
+import { HomePage } from './components/HomePage';
 import { filterToValidChars } from './lib/pixelFont';
 import { config } from './lib/wagmi';
 import { MAX_MAZE_CELLS } from './lib/mazeConstants.generated';
@@ -113,6 +114,15 @@ function AppShell() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
+  // A pre-existing link of the form /?seed=X used to be the game. `/` is now
+  // the directions screen, so those links are rewritten to the canonical path
+  // instead of silently landing on a page that ignores their seed.
+  useEffect(() => {
+    if (location.pathname !== '/') return;
+    const legacy = new URLSearchParams(location.search).get('seed');
+    if (legacy) navigate(seedToPath(sanitizeSeed(legacy)), { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   const ctx: OutletCtx = { seed, selectSeed, selectReplay };
 
   return (
@@ -155,7 +165,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route element={<AppShell />}>
-              <Route index element={null} />
+              <Route index element={<HomePage />} />
               {/* The seed lives in the path: /s/<seed>. Rendering is handled
                   by AppShell for any game path, so the element is null here
                   exactly as it is for the index route. */}

@@ -10,12 +10,14 @@
  * `?seed=` remains readable so links shared before this change keep working.
  */
 
-/** The default maze, which lives at `/` rather than under `/s/`. */
+/** The maze used when someone submits the name field empty. */
 export const DEFAULT_SEED = 'maze♚ ♚king';
 
-/** Path for a seed. The default seed maps to `/`, keeping the root clean. */
+/**
+ * Path for a seed. Every maze lives under `/s/`, including the default one:
+ * `/` is the directions screen, not a game.
+ */
 export function seedToPath(seed: string): string {
-  if (seed === DEFAULT_SEED) return '/';
   return `/s/${encodeURIComponent(seed)}`;
 }
 
@@ -44,7 +46,7 @@ export function seedFromLocation(
   return legacy ?? null;
 }
 
-/** True when a path shows the game, as opposed to gallery or collection. */
+/** True when a path shows a maze. `/` is the directions screen. */
 export function isGamePath(pathname: string): boolean {
-  return pathname === '/' || pathname.startsWith('/s/');
+  return pathname.startsWith('/s/');
 }

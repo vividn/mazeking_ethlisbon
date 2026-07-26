@@ -13,8 +13,8 @@ import {
 } from '../seedUrl';
 
 describe('seedToPath', () => {
-  it('keeps the default seed at the root', () => {
-    expect(seedToPath(DEFAULT_SEED)).toBe('/');
+  it('gives the default seed a path too, since / is the directions screen', () => {
+    expect(seedToPath(DEFAULT_SEED)).toBe(`/s/${encodeURIComponent(DEFAULT_SEED)}`);
   });
 
   it('uses /s/ for a named seed', () => {
@@ -72,19 +72,18 @@ describe('round trip', () => {
       '  padded  ',
     ]) {
       const path = seedToPath(seed);
-      const back = seedFromLocation(path, '');
-      expect(back ?? DEFAULT_SEED).toBe(seed);
+      expect(seedFromLocation(path, '')).toBe(seed);
     }
   });
 });
 
 describe('isGamePath', () => {
-  it('recognises the game routes', () => {
-    expect(isGamePath('/')).toBe(true);
+  it('recognises maze paths', () => {
     expect(isGamePath('/s/SNARK')).toBe(true);
   });
 
-  it('rejects the others', () => {
+  it('rejects the directions screen and the other pages', () => {
+    expect(isGamePath('/')).toBe(false);
     expect(isGamePath('/gallery')).toBe(false);
     expect(isGamePath('/mazes')).toBe(false);
   });
