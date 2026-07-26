@@ -219,6 +219,11 @@
     "name": "attestationDigest",
     "inputs": [
       {
+        "name": "seed",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
         "name": "mazeHash",
         "type": "bytes32",
         "internalType": "bytes32"
@@ -617,14 +622,26 @@
         "internalType": "bool"
       },
       {
-        "name": "attestedOptimalMoves",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "attestation",
-        "type": "bytes",
-        "internalType": "bytes"
+        "name": "att",
+        "type": "tuple",
+        "internalType": "struct MazeKingNFT.MazeAttestation",
+        "components": [
+          {
+            "name": "seed",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "optimalMoves",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -683,6 +700,42 @@
   },
   {
     "type": "function",
+    "name": "podium",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple[3]",
+        "internalType": "struct MazeKingNFT.Score[3]",
+        "components": [
+          {
+            "name": "solver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "moveCount",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "at",
+            "type": "uint40",
+            "internalType": "uint40"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "registerMaze",
     "inputs": [
       {
@@ -704,22 +757,34 @@
     "name": "registerWithAttestation",
     "inputs": [
       {
+        "name": "att",
+        "type": "tuple",
+        "internalType": "struct MazeKingNFT.MazeAttestation",
+        "components": [
+          {
+            "name": "seed",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "optimalMoves",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "signature",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
+      },
+      {
         "name": "mazeHash",
         "type": "bytes32",
         "internalType": "bytes32"
       },
       {
         "name": "layout",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "optimalMoves_",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "signature",
         "type": "bytes",
         "internalType": "bytes"
       }

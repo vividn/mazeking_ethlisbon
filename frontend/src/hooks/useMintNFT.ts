@@ -25,7 +25,7 @@ import {
  * (ma-6cr.6). The on-chain signature is now:
  *
  *   mintWithProof(bytes proof, bytes32 mazeHash, bytes layout, uint16 moveCount,
- *                 bool bearer, uint32 attestedOptimalMoves, bytes attestation)
+ *                 bool bearer, MazeAttestation att)
  *
  * `mazeHash` is the Pedersen hash of the canonical layout (computed via
  * bb.js — that wiring lives in ma-6cr.8). `layout` is the canonical bytes
@@ -119,8 +119,14 @@ export function useMintNFT() {
         attestation = null;
       }
     }
-    const attestedOptimalMoves = attestation?.optimalMoves ?? 0;
-    const attestationSig = attestation?.signature ?? '0x';
+    // The contract takes these three together: they only mean anything as one
+    // statement, and grouping them also keeps mintWithProof within the EVM's
+    // stack depth.
+    const att = {
+      seed: attestation ? (seed ?? '') : '',
+      optimalMoves: attestation?.optimalMoves ?? 0,
+      signature: attestation?.signature ?? '0x',
+    };
 
     const proofHex = `0x${Array.from(proof)
       .map((b) => b.toString(16).padStart(2, '0'))
@@ -151,15 +157,7 @@ export function useMintNFT() {
           address: nftAddress,
           abi: MazeKingNFTAbi,
           functionName: 'mintWithProof',
-          args: [
-            proofHex,
-            mazeHash,
-            layoutHex,
-            moveCount,
-            bearer,
-            attestedOptimalMoves,
-            attestationSig,
-          ],
+          args: [proofHex, mazeHash, layoutHex, moveCount, bearer, att],
         });
       } catch (simErr) {
         const reason =
@@ -179,15 +177,7 @@ export function useMintNFT() {
       address: nftAddress,
       abi: MazeKingNFTAbi,
       functionName: 'mintWithProof',
-      args: [
-        proofHex,
-        mazeHash,
-        layoutHex,
-        moveCount,
-        bearer,
-        attestedOptimalMoves,
-        attestationSig,
-      ],
+      args: [proofHex, mazeHash, layoutHex, moveCount, bearer, att],
     });
   };
 

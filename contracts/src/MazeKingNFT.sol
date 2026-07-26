@@ -65,6 +65,23 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
     // Tokens already minted remain owned; this is a display-layer signal.
     mapping(uint256 => bool) public disqualified;
 
+    /// @notice One entry on a maze's podium.
+    /// @dev `at` breaks ties: two solvers on the same move count are ranked by
+    ///      who got there first, which is the only tie-break that cannot be
+    ///      gamed after the fact.
+    struct Score {
+        address solver;
+        uint16 moveCount;
+        uint40 at;
+    }
+
+    /// @notice The three best solves of a maze, best first.
+    /// @dev Three fixed slots rather than a sorted list. A maze can be solved
+    ///      by anyone any number of times, so an unbounded leaderboard would
+    ///      make minting cost grow without limit and eventually price out the
+    ///      very solvers it ranks.
+    mapping(uint256 => Score[3]) private _podium;
+
     // Stats struct for tracking user achievements per maze
     struct Stats {
         uint16 minMoves; // Minimum moves achieved
@@ -148,21 +165,49 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
     ///      `layoutHash` rather than the layout itself keeps the signed payload
     ///      fixed-size while still binding the exact bytes, so a caller cannot
     ///      pair a valid signature with a different layout.
-    bytes32 private constant ATTESTATION_TYPEHASH =
-        keccak256("MazeAttestation(bytes32 mazeHash,bytes32 layoutHash,uint32 optimalMoves)");
+    /// @dev The seed is part of the signed statement, not an extra argument.
+    ///      Binding it here is what lets a maze be found by name -- an ENS
+    ///      wildcard resolver is handed a label, and without a seed->token
+    ///      mapping there is no on-chain path from that label to a maze, since
+    ///      the token id is a Pedersen hash computed off chain. Signing the
+    ///      seed alongside the layout also means the registrar is asserting the
+    ///      one thing nobody else can check cheaply: that this seed really does
+    ///      grow this maze.
+    /// @notice A registrar's signed statement about one maze.
+    /// @dev Grouped rather than passed loose so `mintWithProof` stays within
+    ///      the EVM's stack depth, and so the three values that only mean
+    ///      anything together cannot be supplied apart.
+    struct MazeAttestation {
+        string seed;
+        uint32 optimalMoves;
+        bytes signature;
+    }
+
+    bytes32 private constant ATTESTATION_TYPEHASH = keccak256(
+        "MazeAttestation(string seed,bytes32 mazeHash,bytes32 layoutHash,uint32 optimalMoves)"
+    );
 
     /// @notice Hash a registrar attestation, for signing off chain.
     /// @dev The EIP-712 domain binds chain id and contract address, so a
     ///      signature produced for one deployment cannot be replayed onto
     ///      another. Replay within a deployment is harmless: registration is
     ///      idempotent and every value is a pure function of the maze.
-    function attestationDigest(bytes32 mazeHash, bytes32 layoutHash, uint32 optimalMoves_)
-        public
-        view
-        returns (bytes32)
-    {
+    function attestationDigest(
+        string calldata seed,
+        bytes32 mazeHash,
+        bytes32 layoutHash,
+        uint32 optimalMoves_
+    ) public view returns (bytes32) {
         return _hashTypedDataV4(
-            keccak256(abi.encode(ATTESTATION_TYPEHASH, mazeHash, layoutHash, optimalMoves_))
+            keccak256(
+                abi.encode(
+                    ATTESTATION_TYPEHASH,
+                    keccak256(bytes(seed)),
+                    mazeHash,
+                    layoutHash,
+                    optimalMoves_
+                )
+            )
         );
     }
 
@@ -171,35 +216,43 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
     ///      caller. Anyone holding a valid attestation may register the maze it
     ///      describes, which is what lets a player carry their own.
     function registerWithAttestation(
+        MazeAttestation calldata att,
         bytes32 mazeHash,
-        bytes calldata layout,
-        uint32 optimalMoves_,
-        bytes calldata signature
+        bytes calldata layout
     ) external {
-        _applyAttestation(mazeHash, layout, optimalMoves_, signature);
+        _applyAttestation(att, mazeHash, layout);
     }
 
     function _applyAttestation(
+        MazeAttestation calldata att,
         bytes32 mazeHash,
-        bytes calldata layout,
-        uint32 optimalMoves_,
-        bytes calldata signature
+        bytes calldata layout
     ) internal {
         address signer = ECDSA.recover(
-            attestationDigest(mazeHash, keccak256(layout), optimalMoves_), signature
+            attestationDigest(att.seed, mazeHash, keccak256(layout), att.optimalMoves),
+            att.signature
         );
         if (!hasRole(REGISTRAR_ROLE, signer)) revert BadAttestation(signer);
 
         uint256 tokenId = uint256(mazeHash);
         layouts[tokenId] = layout;
         _listMaze(tokenId);
-        optimalMoves[tokenId] = optimalMoves_;
+        optimalMoves[tokenId] = att.optimalMoves;
         registrarApproved[tokenId] = true;
 
+        // Bind the name to the maze, so it can be found by name later. Skipped
+        // when already bound: re-attesting the same maze is idempotent
+        // everywhere else and must not start reverting here.
+        bytes32 seedHash = keccak256(bytes(att.seed));
+        if (officialMazes[seedHash] == 0) {
+            officialMazes[seedHash] = tokenId;
+            emit MazeRegistered(seedHash, att.seed, tokenId);
+        }
+
         emit LayoutStored(tokenId, layout.length);
-        emit OptimalMovesSet(tokenId, optimalMoves_);
+        emit OptimalMovesSet(tokenId, att.optimalMoves);
         emit RegistrarApprovedSet(tokenId, true);
-        emit MazeAttested(tokenId, signer, optimalMoves_);
+        emit MazeAttested(tokenId, signer, att.optimalMoves);
     }
 
     /// @notice Update the base URI
@@ -225,30 +278,27 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
     /// @param moveCount  Number of moves taken (must match the proof).
     /// @param bearer     Whether the proof was produced UNBOUND. See the
     ///                   sender-binding note below; false is the safe default.
-    /// @param attestedOptimalMoves Optimal solve asserted by the registrar.
-    ///        Ignored when `attestation` is empty.
-    /// @param attestation Registrar signature over this maze, or empty to skip.
-    ///        Carrying it here registers the maze in the same transaction that
-    ///        mints it, so a maze becomes badge-capable the first time anyone
-    ///        solves it — without the registrar sending a transaction, and so
-    ///        without a registrar nonce to serialise behind a scaled-out
-    ///        service.
+    /// @param att        Registrar attestation, or an empty signature to skip
+    ///        registration. Carrying it here registers the maze in the same
+    ///        transaction that mints it, so a maze becomes badge-capable the
+    ///        first time anyone solves it — without the registrar sending a
+    ///        transaction, and so without a registrar nonce to serialise
+    ///        behind a scaled-out service.
     function mintWithProof(
         bytes calldata proof,
         bytes32 mazeHash,
         bytes calldata layout,
         uint16 moveCount,
         bool bearer,
-        uint32 attestedOptimalMoves,
-        bytes calldata attestation
+        MazeAttestation calldata att
     ) external {
         require(verifierContract != address(0), "Verifier not set");
 
         // Applied before the proof is checked so that the layout and optimum
         // are in place before badges are graded, and so a maze registers even
         // if this particular proof turns out to be invalid.
-        if (attestation.length != 0) {
-            _applyAttestation(mazeHash, layout, attestedOptimalMoves, attestation);
+        if (att.signature.length != 0) {
+            _applyAttestation(att, mazeHash, layout);
         }
 
         // 1. Verify proof on-chain with public inputs =
@@ -332,6 +382,8 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
             }
             userStats.timesSolved++;
         }
+
+        _recordPodium(tokenId, msg.sender, moveCount);
 
         // 6. Delegate badge awards to the configured strategy
         if (badgeAwarder != address(0)) {
@@ -500,6 +552,68 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply, EIP712 {
         address oldVerifier = verifierContract;
         verifierContract = _verifier;
         emit VerifierUpdated(oldVerifier, _verifier);
+    }
+
+    /// @notice The three best solves of a maze, best first.
+    /// @dev Empty slots have a zero solver. Reading is the point of keeping
+    ///      this on chain at all: a scorecard resolved through ENS has no
+    ///      indexer to fall back on.
+    function podium(uint256 tokenId) external view returns (Score[3] memory) {
+        return _podium[tokenId];
+    }
+
+    /// @dev Insert a solve into the maze's top three, if it belongs there.
+    ///
+    ///      A solver holds at most one slot. Without that, one person grinding
+    ///      the same maze would fill the whole podium and it would stop being a
+    ///      leaderboard. Their existing entry is improved in place, then the
+    ///      three slots are re-sorted -- cheap, because there are only three.
+    function _recordPodium(uint256 tokenId, address solver, uint16 moveCount) internal {
+        Score[3] storage board = _podium[tokenId];
+
+        for (uint256 i = 0; i < 3; i++) {
+            if (board[i].solver == solver) {
+                // Only an improvement counts; a worse repeat solve must not
+                // push their own better result off the board.
+                if (moveCount < board[i].moveCount) {
+                    board[i].moveCount = moveCount;
+                    board[i].at = uint40(block.timestamp);
+                    _sortPodium(board);
+                }
+                return;
+            }
+        }
+
+        // Not on the board yet: displace the worst entry if this beats it.
+        Score storage worst = board[2];
+        if (worst.solver == address(0) || _beats(moveCount, uint40(block.timestamp), worst)) {
+            worst.solver = solver;
+            worst.moveCount = moveCount;
+            worst.at = uint40(block.timestamp);
+            _sortPodium(board);
+        }
+    }
+
+    /// @dev Fewer moves wins; an equal score is broken by who arrived first.
+    function _beats(uint16 moveCount, uint40 at, Score storage other) private view returns (bool) {
+        if (other.solver == address(0)) return true;
+        if (moveCount != other.moveCount) return moveCount < other.moveCount;
+        return at < other.at;
+    }
+
+    /// @dev Three elements, so an insertion sort is both the smallest code and
+    ///      the cheapest gas. Empty slots sort last because `_beats` treats a
+    ///      zero solver as beatable by anything.
+    function _sortPodium(Score[3] storage board) private {
+        for (uint256 i = 1; i < 3; i++) {
+            for (uint256 j = i; j > 0; j--) {
+                if (board[j].solver == address(0)) break;
+                if (!_beats(board[j].moveCount, board[j].at, board[j - 1])) break;
+                Score memory tmp = board[j - 1];
+                board[j - 1] = board[j];
+                board[j] = tmp;
+            }
+        }
     }
 
     /// @notice Register an official maze seed to its token ID

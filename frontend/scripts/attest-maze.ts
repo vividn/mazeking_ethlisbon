@@ -33,6 +33,7 @@ import { deriveMaze, bytesToHex } from './derive-maze';
 /** Mirrors ATTESTATION_TYPEHASH in MazeKingNFT.sol. */
 const TYPES = {
   MazeAttestation: [
+    { name: 'seed', type: 'string' },
     { name: 'mazeHash', type: 'bytes32' },
     { name: 'layoutHash', type: 'bytes32' },
     { name: 'optimalMoves', type: 'uint32' },
@@ -73,6 +74,7 @@ export async function signAttestation(seed: string, opts: AttestOptions) {
     types: TYPES,
     primaryType: 'MazeAttestation',
     message: {
+      seed,
       mazeHash: derived.mazeHash,
       layoutHash: keccak256(layout),
       optimalMoves: derived.optimalMoves,
