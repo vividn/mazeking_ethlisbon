@@ -73,18 +73,26 @@ Create a bucket in Scaleway Object Storage (e.g. region `fr-par`) and enable
 
 Grant anonymous read with a bucket policy.
 
-**Read this before applying one.** On Scaleway a bucket policy is *authoritative*:
-once set, the bucket owner is **no longer implicitly granted access**. A policy
-that grants only anonymous `GetObject` will lock your own API key out of the
-bucket — IAM permissions, however complete, do not override it. The symptom is
-distinctive and confusing: `list-buckets` still shows the bucket, while
-`head-bucket` and every write return `403 Forbidden`.
+**The trap worth knowing before you apply one.** On Scaleway a bucket policy is
+*authoritative*: once set, access is decided by the policy and IAM permissions
+no longer grant it. The console's suggested policy contains an "Allow owner"
+statement naming a **user**:
 
-Scaleway policies also differ from AWS in shape: resources are bucket names
-rather than ARNs, and principals are `SCW` identifiers.
+```json
+"Principal": { "SCW": "user_id:<your-user-uuid>" }
+```
 
-The policy must therefore grant **both** the application that deploys **and**
-anonymous readers:
+That grants the person clicking in the console. A CI deploy normally uses an
+**application** API key, which is a different principal — so the policy looks
+complete, the key carries `ObjectStorageFullAccess`, and every request still
+returns `403`.
+
+The symptom is distinctive: `list-buckets` keeps working, because it is an
+account-level operation the bucket policy does not govern, while `head-bucket`
+and every write are Forbidden. That combination means a bucket policy is
+excluding the caller — not a bad credential, wrong region, or wrong project.
+
+A working policy names **both** principals plus the public:
 
 ```json
 {
@@ -92,29 +100,37 @@ anonymous readers:
   "Id": "mazeking-static-site",
   "Statement": [
     {
-      "Sid": "DeployerFullAccess",
+      "Sid": "Allow owner",
       "Effect": "Allow",
-      "Principal": { "SCW": "application_id:YOUR-APPLICATION-ID" },
-      "Action": "s3:*",
+      "Principal": { "SCW": "user_id:YOUR-USER-UUID" },
+      "Action": "*",
       "Resource": ["YOUR-BUCKET", "YOUR-BUCKET/*"]
     },
     {
-      "Sid": "PublicRead",
+      "Sid": "Allow deployer application",
+      "Effect": "Allow",
+      "Principal": { "SCW": "application_id:YOUR-APPLICATION-UUID" },
+      "Action": "*",
+      "Resource": ["YOUR-BUCKET", "YOUR-BUCKET/*"]
+    },
+    {
+      "Sid": "Delegate access",
       "Effect": "Allow",
       "Principal": "*",
-      "Action": ["s3:GetObject"],
-      "Resource": ["YOUR-BUCKET/*"]
+      "Action": "s3:GetObject",
+      "Resource": "YOUR-BUCKET/*"
     }
   ]
 }
 ```
 
-`YOUR-APPLICATION-ID` is the IAM application that owns the API key — use
-`user_id:` instead if the key belongs to a user rather than an application.
+The application UUID is in **IAM → Applications**; the API key's detail page
+also shows which principal owns it. Note the Scaleway shape: resources are bare
+bucket names, not ARNs.
 
-**To unblock a bucket that has already locked out its deployer:** delete the
-bucket policy. Access reverts to IAM, so the key works again immediately; the
-site simply is not publicly readable until a corrected policy is applied.
+**To unblock immediately**, deleting the bucket policy restores IAM-based
+access — at the cost of the site not being publicly readable until a corrected
+policy is applied.
 
 ### 2. Cloudflare
 
