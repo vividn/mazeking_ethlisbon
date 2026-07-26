@@ -402,7 +402,6 @@ contract MazeKingNFTTest is Test {
         assertEq(nft.mazeCountOf(user), 1);
     }
 
-
     function test_AllMazes_ListsEveryMazeOnce() public {
         bytes memory layout = _mockLayout();
         bytes32 mazeHash = _mockMazeHash(layout);
