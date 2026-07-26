@@ -20,12 +20,15 @@ import { DebugWinModalButton } from './components/DebugWinModalButton';
 import { HomePage } from './components/HomePage';
 import { filterToValidChars } from './lib/pixelFont';
 import { config } from './lib/wagmi';
+import { useReplayFromPath } from './hooks/useReplayFromPath';
 import { MAX_MAZE_CELLS } from './lib/mazeConstants.generated';
 import {
   DEFAULT_SEED as SEED_URL_DEFAULT,
   seedToPath,
   seedFromLocation,
   isGamePath,
+  tokenPath,
+  tokenIdFromLocation,
 } from './lib/seedUrl';
 
 const queryClient = new QueryClient();
@@ -73,6 +76,17 @@ function AppShell() {
 
   const isGameRoute = isGamePath(location.pathname);
 
+  // A `/m/<tokenId>` link opened cold has no layout in memory, so fetch it.
+  // Without this the page would render the default seed's maze under a URL
+  // naming a particular one.
+  const fetchedReplay = useReplayFromPath(
+    location.pathname,
+    replay !== null && tokenIdFromLocation(location.pathname) === replay.tokenId
+  );
+  useEffect(() => {
+    if (fetchedReplay) setReplay(fetchedReplay);
+  }, [fetchedReplay]);
+
   const handleSeedChange = useCallback((newSeed: string) => {
     setSeed(newSeed);
     setReplay(null);
@@ -94,9 +108,10 @@ function AppShell() {
   const selectReplay = useCallback(
     (payload: ReplayPayload) => {
       setReplay(payload);
-      // Drop any seed from the URL — a replay is identified by tokenId, not
-      // by a typeable seed string.
-      navigate('/');
+      // A replay is identified by tokenId, not by a typeable seed, so it gets
+      // its own path. Navigating to '/' sent it to the directions screen --
+      // which was the game before the URL change, and is not any more.
+      navigate(tokenPath(payload.tokenId));
     },
     [navigate]
   );
@@ -171,6 +186,9 @@ function App() {
                   by AppShell for any game path, so the element is null here
                   exactly as it is for the index route. */}
               <Route path="s/:seed" element={null} />
+              {/* A replay of a minted maze, by token id. Rendered by AppShell
+                  like the seed path, so the element is null here too. */}
+              <Route path="m/:tokenId" element={null} />
               <Route path="mazes" element={<MyMazesPage />} />
               <Route path="gallery" element={<GalleryPage />} />
               {/* Not linked from anywhere: it is an operator tool, not a page
