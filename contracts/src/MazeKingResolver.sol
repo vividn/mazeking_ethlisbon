@@ -2,6 +2,29 @@
 pragma solidity ^0.8.24;
 
 import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
+import { Base64 } from "@openzeppelin/contracts/utils/Base64.sol";
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
+
+/// @notice The slice of MazeKing this resolver reads. Deliberately narrow: a
+///         resolver should be able to answer questions about a maze and nothing
+///         more.
+interface IMazeKingScorecard {
+    struct Score {
+        address solver;
+        uint16 moveCount;
+        uint40 at;
+    }
+
+    function officialMazes(bytes32 seedHash) external view returns (uint256);
+    function layouts(uint256 tokenId) external view returns (bytes memory);
+    function optimalMoves(uint256 tokenId) external view returns (uint32);
+    function podium(uint256 tokenId) external view returns (Score[3] memory);
+    function renderer() external view returns (address);
+}
+
+interface IMazeRenderer {
+    function renderSvg(uint256 tokenId, bytes calldata layout) external view returns (string memory);
+}
 
 /// @notice ENSIP-10 wildcard resolution. ENS calls this with the full
 ///         DNS-encoded name when no resolver is set on the subname itself.
@@ -157,6 +180,10 @@ contract MazeKingResolver is IExtendedResolver, AccessControl {
     }
 
     /// @dev Records for `<seed>.mazeking.eth`, all computed from the label.
+    ///
+    ///      Nothing here is stored. Every answer is read from the maze contract
+    ///      at resolution time, so a scorecard cannot go stale and cannot
+    ///      disagree with the chain -- the two are the same read.
     function _seedText(string memory label, string memory key)
         internal
         view
@@ -167,17 +194,73 @@ contract MazeKingResolver is IExtendedResolver, AccessControl {
         if (k == keccak256("url")) {
             return string.concat(seedUrlPrefix, label);
         }
-        if (k == keccak256("description")) {
-            return string.concat(
-                'The MazeKing maze grown from the name "',
-                label,
-                '". Its layout is fixed by that name and committed on chain; this record only points at it.'
-            );
-        }
         if (k == keccak256("name")) {
             return label;
         }
+
+        uint256 tokenId = IMazeKingScorecard(mazeNft).officialMazes(keccak256(bytes(label)));
+        // A name nobody has registered describes no maze. Answering anyway
+        // would present an empty scorecard as though the maze existed.
+        if (tokenId == 0) return "";
+
+        if (k == keccak256("avatar")) {
+            return _avatar(tokenId);
+        }
+        if (k == keccak256("description")) {
+            return _description(label, tokenId);
+        }
+        if (k == keccak256("first_place")) {
+            return _place(tokenId, 0);
+        }
+        if (k == keccak256("second_place")) {
+            return _place(tokenId, 1);
+        }
+        if (k == keccak256("third_place")) {
+            return _place(tokenId, 2);
+        }
         return "";
+    }
+
+    /// @dev The maze itself, drawn on chain and inlined as a data URI.
+    ///      No hosting, no pinning, nothing to expire: the picture is generated
+    ///      from the same layout bytes the proof commits to, so it cannot show
+    ///      a different maze than the one being scored.
+    function _avatar(uint256 tokenId) internal view returns (string memory) {
+        address r = IMazeKingScorecard(mazeNft).renderer();
+        if (r == address(0)) return "";
+        bytes memory layout = IMazeKingScorecard(mazeNft).layouts(tokenId);
+        if (layout.length == 0) return "";
+        string memory svg = IMazeRenderer(r).renderSvg(tokenId, layout);
+        return string.concat("data:image/svg+xml;base64,", Base64.encode(bytes(svg)));
+    }
+
+    function _description(string memory label, uint256 tokenId)
+        internal
+        view
+        returns (string memory)
+    {
+        uint32 optimal = IMazeKingScorecard(mazeNft).optimalMoves(tokenId);
+        string memory tail = optimal == 0
+            ? " Its shortest route has not been registered yet."
+            : string.concat(
+                " Its shortest possible route is ", Strings.toString(uint256(optimal)), " moves."
+            );
+        return string.concat('The MazeKing maze grown from the name "', label, '".', tail);
+    }
+
+    /// @dev One podium line: who, in how many moves, and when.
+    ///      Empty rather than a zero address for an unclaimed place, so a
+    ///      profile shows two winners rather than a third phantom one.
+    function _place(uint256 tokenId, uint256 index) internal view returns (string memory) {
+        IMazeKingScorecard.Score memory s = IMazeKingScorecard(mazeNft).podium(tokenId)[index];
+        if (s.solver == address(0)) return "";
+        return string.concat(
+            Strings.toHexString(uint160(s.solver), 20),
+            " - ",
+            Strings.toString(uint256(s.moveCount)),
+            " moves - ",
+            Strings.toString(uint256(s.at))
+        );
     }
 
     // ----------------------------------------------------------------------
