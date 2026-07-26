@@ -132,6 +132,11 @@ jobs:
           NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
           CHAIN_ID: ${{ vars.CHAIN_ID }}
           NAMESPACE: ${{ vars.SCW_FUNCTION_NAMESPACE || 'mazeking' }}
+          # Scaleway retires runtimes, and creating a function on a retired one
+          # fails with "runtime reached end of support" rather than falling back
+          # to something current. node20 was retired; this stays overridable so
+          # the next retirement is a variable change rather than a code change.
+          RUNTIME: ${{ vars.SCW_FUNCTION_RUNTIME || 'node22' }}
         working-directory: frontend/dist-attestor
         run: |
           set -euo pipefail
@@ -151,7 +156,7 @@ jobs:
             | jq -r '.[0].id // empty')
           if [ -z "$fn_id" ]; then
             fn_id=$(scw function function create \
-              namespace-id="$ns_id" name=attest runtime=node20 \
+              namespace-id="$ns_id" name=attest runtime="${RUNTIME}" \
               handler=handler.handle http-option=redirected privacy=public \
               min-scale=0 max-scale=5 memory-limit=512 -o json | jq -r '.id')
           fi

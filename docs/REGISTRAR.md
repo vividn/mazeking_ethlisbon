@@ -147,6 +147,7 @@ Variables (all public by nature):
 | `SCW_PROJECT_ID` / `SCW_ORGANIZATION_ID` | Scaleway target. |
 | `SCW_REGION` | Defaults to `fr-par`. |
 | `SCW_FUNCTION_NAMESPACE` | Defaults to `mazeking`. |
+| `SCW_FUNCTION_RUNTIME` | Defaults to `node22`. Scaleway retires runtimes, and creating a function on a retired one fails outright rather than falling back. |
 | `VITE_ATTESTOR_URL` | The deployed function's URL, read by the **frontend** deploy. |
 
 The workflow exercises the built artifact before shipping it — it runs the
