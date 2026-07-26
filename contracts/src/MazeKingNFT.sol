@@ -41,6 +41,19 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     mapping(uint256 => bool) public registered;
     mapping(uint256 => bool) public registrarApproved;
 
+    // Global enumeration — every maze that exists on chain, in the order it was
+    // first solved by anyone. Appended exactly once per maze, guarded by the
+    // same first-layout-write check, so it cannot contain duplicates.
+    //
+    // Exists for the same reason as the per-owner list: a public gallery
+    // otherwise has to reconstruct the set from event logs, which needs wide
+    // eth_getLogs ranges. Providers cap those aggressively — Alchemy's free
+    // tier allows 10 blocks per query — so a log-based gallery is not merely
+    // slow but unavailable on common RPC plans.
+    uint256[] private _allMazes;
+    // Set once per maze so re-publishing a layout cannot duplicate an entry.
+    mapping(uint256 => bool) private _mazeListed;
+
     // Owner enumeration — the token ids each address has solved, in mint order.
     // Lets a client list a collection with one view call instead of scanning
     // ERC-1155 transfer logs. Tokens are mint-only, so this is exactly the set
@@ -202,6 +215,7 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
         //    Layout is shared across all solvers; subsequent mints are O(1).
         if (layouts[tokenId].length == 0) {
             layouts[tokenId] = layout;
+            _listMaze(tokenId);
             emit LayoutStored(tokenId, layout.length);
         }
 
@@ -261,6 +275,45 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
         return super.uri(tokenId);
     }
 
+    /// @dev Append a maze to the global list, once. Both the first mint and a
+    ///      registrar publication can be the first time a maze becomes known,
+    ///      and a registrar may re-publish a layout, so the guard is a
+    ///      dedicated flag rather than either caller's local condition.
+    function _listMaze(uint256 tokenId) internal {
+        if (_mazeListed[tokenId]) return;
+        _mazeListed[tokenId] = true;
+        _allMazes.push(tokenId);
+    }
+
+    /// @notice Every maze that exists on chain, oldest first.
+    /// @dev One view call in place of an event-log scan. Prefer
+    ///      `allMazesSlice` once the list outgrows a single response.
+    function allMazes() external view returns (uint256[] memory) {
+        return _allMazes;
+    }
+
+    /// @notice How many distinct mazes have ever been solved.
+    function mazeCount() external view returns (uint256) {
+        return _allMazes.length;
+    }
+
+    /// @notice Page through `allMazes`.
+    /// @dev Returns fewer than `limit` at the end, and an empty array when
+    ///      `start` is past it.
+    function allMazesSlice(uint256 start, uint256 limit)
+        external
+        view
+        returns (uint256[] memory page)
+    {
+        if (start >= _allMazes.length) return new uint256[](0);
+        uint256 end = start + limit;
+        if (end > _allMazes.length) end = _allMazes.length;
+        page = new uint256[](end - start);
+        for (uint256 i = start; i < end; i++) {
+            page[i - start] = _allMazes[i];
+        }
+    }
+
     /// @notice Every maze this address has solved, in mint order.
     /// @dev Enumeration for clients: one call replaces a transfer-log scan.
     ///      Entries persist through transfers — this is "solved", not "held".
@@ -309,6 +362,9 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Supply {
     /// @param layout Compact maze layout bytes (header + packed cells)
     function setLayout(uint256 tokenId, bytes calldata layout) external onlyRole(REGISTRAR_ROLE) {
         layouts[tokenId] = layout;
+        // Registrar-published mazes belong in the gallery before anyone has
+        // solved them — that is the point of publishing one.
+        _listMaze(tokenId);
         emit LayoutStored(tokenId, layout.length);
     }
 

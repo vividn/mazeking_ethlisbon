@@ -402,6 +402,81 @@ contract MazeKingNFTTest is Test {
         assertEq(nft.mazeCountOf(user), 1);
     }
 
+
+    function test_AllMazes_ListsEveryMazeOnce() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        assertEq(nft.mazeCount(), 0);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+        assertEq(nft.mazeCount(), 1);
+
+        // A second solver of the SAME maze must not add a second entry — the
+        // list is of mazes, not of solves.
+        vm.prank(address(0xFEE1));
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 80, false);
+        assertEq(nft.mazeCount(), 1);
+
+        // The same solver re-solving must not either.
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 70, false);
+        assertEq(nft.mazeCount(), 1);
+
+        uint256[] memory all = nft.allMazes();
+        assertEq(all.length, 1);
+        assertEq(all[0], uint256(mazeHash));
+    }
+
+    function test_AllMazes_DistinctMazesEachAppear() public {
+        bytes memory a = _mockLayout();
+        bytes memory b = _mockLayout();
+        b[21] = bytes1(uint8(0x7F)); // perturb the cell bytes -> different hash
+        bytes32 ha = _mockMazeHash(a);
+        bytes32 hb = _mockMazeHash(b);
+        assertTrue(ha != hb);
+
+        vm.startPrank(user);
+        nft.mintWithProof(hex"1234567890", ha, a, 100, false);
+        nft.mintWithProof(hex"1234567890", hb, b, 100, false);
+        vm.stopPrank();
+
+        assertEq(nft.mazeCount(), 2);
+    }
+
+    /// A registrar-published maze belongs in the gallery before anyone solves
+    /// it, and re-publishing its layout must not list it twice.
+    function test_AllMazes_IncludesRegistrarPublishedMazes() public {
+        bytes memory layout = _mockLayout();
+        uint256 tokenId = uint256(_mockMazeHash(layout));
+
+        vm.prank(owner);
+        nft.setLayout(tokenId, layout);
+        assertEq(nft.mazeCount(), 1);
+
+        vm.prank(owner);
+        nft.setLayout(tokenId, layout);
+        assertEq(nft.mazeCount(), 1);
+
+        // And a later mint of that same maze still does not duplicate it.
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", _mockMazeHash(layout), layout, 100, false);
+        assertEq(nft.mazeCount(), 1);
+    }
+
+    function test_AllMazesSlice_Pages() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        assertEq(nft.allMazesSlice(0, 10).length, 1);
+        assertEq(nft.allMazesSlice(5, 10).length, 0);
+        assertEq(nft.allMazesSlice(0, 0).length, 0);
+    }
+
     function test_MazesOfSlice_Pages() public {
         bytes memory layout = _mockLayout();
         bytes32 mazeHash = _mockMazeHash(layout);

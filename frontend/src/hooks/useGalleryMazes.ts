@@ -52,6 +52,47 @@ interface MazeAggregate {
   minMoves: number | null;
 }
 
+/**
+ * Every maze on chain, from the contract's own list.
+ *
+ * The gallery previously reconstructed this from event logs, which requires
+ * wide eth_getLogs ranges. Providers cap those hard — Alchemy's free tier
+ * allows 10 blocks per query — so a 100k-block scan is not slow, it is
+ * rejected outright, and the page failed to load at all.
+ *
+ * Deployments predating `allMazes` fall back to the log scan.
+ */
+async function discoverAllMazeIds(
+  client: PublicClient,
+  contract: Address
+): Promise<bigint[] | null> {
+  try {
+    const ids = (await client.readContract({
+      address: contract,
+      abi: MazeKingNFTAbi as never,
+      functionName: 'allMazes',
+    })) as readonly bigint[];
+    return [...ids];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort log reads. Seed strings and cross-solver totals exist only in
+ * events, so on a provider with a narrow getLogs window they are simply
+ * unavailable. That must degrade the gallery, not break it: tiles fall back to
+ * a short token id and omit stats rather than the page failing.
+ */
+async function bestEffort<T>(work: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await work();
+  } catch (err) {
+    console.warn('[gallery] optional log query unavailable:', err);
+    return fallback;
+  }
+}
+
 async function scanRegisteredMazes(
   client: PublicClient,
   contract: Address
@@ -206,10 +247,30 @@ export function useGalleryMazes(
       setState((s) => ({ ...s, loading: true, error: null }));
 
       try {
+        // The token list comes from the contract when it can. Only the
+        // extras — seed strings and cross-solver totals — still need logs, and
+        // those are optional.
+        const enumerated = await discoverAllMazeIds(
+          publicClient,
+          contractAddress
+        );
+        if (cancelled) return;
+
         const [registered, mintedIds, proofStats] = await Promise.all([
-          scanRegisteredMazes(publicClient, contractAddress),
-          scanMintedTokenIds(publicClient, contractAddress),
-          scanProofStats(publicClient, contractAddress),
+          bestEffort(
+            () => scanRegisteredMazes(publicClient, contractAddress),
+            [] as Array<{ tokenId: bigint; seed: string }>
+          ),
+          enumerated
+            ? Promise.resolve(enumerated)
+            : bestEffort(
+                () => scanMintedTokenIds(publicClient, contractAddress),
+                [] as bigint[]
+              ),
+          bestEffort(
+            () => scanProofStats(publicClient, contractAddress),
+            new Map<string, MazeAggregate>()
+          ),
         ]);
         if (cancelled) return;
 
