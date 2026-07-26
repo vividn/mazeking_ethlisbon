@@ -81,7 +81,13 @@ export function useMintNFT() {
      * attestation; the maze's identity on chain is still its hash, never its
      * seed.
      */
-    seed?: string
+    seed?: string,
+    /**
+     * An attestation already obtained by the UI, e.g. via an explicit
+     * "register this maze" action. Passing it here avoids asking the registrar
+     * twice for the same signature.
+     */
+    prefetched?: Attestation | null
   ) => {
     setSimulateError(null);
 
@@ -103,8 +109,8 @@ export function useMintNFT() {
     // Ask for an attestation before simulating, so a maze nobody pre-registered
     // can still be registered by this very transaction and award its badges.
     // Every failure path here returns null and mints unattested.
-    let attestation: Attestation | null = null;
-    if (seed) {
+    let attestation: Attestation | null = prefetched ?? null;
+    if (!attestation && seed) {
       attestation = await fetchAttestation(seed, chain.id, nftAddress);
       if (attestation && !attestationMatchesLayout(attestation, layout)) {
         console.warn(
