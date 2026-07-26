@@ -109,7 +109,11 @@ jobs:
           SCW_BUCKET: ${{ vars.SCW_BUCKET_NAME || vars.SCW_BUCKET || secrets.SCW_BUCKET }}
           SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
-          set -uo pipefail
+          # Deliberately NOT -e/-o pipefail here: this step's whole purpose is to
+          # run commands that are expected to fail and report why. GitHub invokes
+          # `bash -e`, so failures are disabled explicitly.
+          set +e +o pipefail
+          set -u
           REGION="${SCW_REGION:-fr-par}"
           ENDPOINT="https://s3.${REGION}.scw.cloud"
           echo "endpoint : ${ENDPOINT}"
@@ -155,7 +159,8 @@ jobs:
             fi
             echo "not writable in $R either"
           done
-          echo "--- head-bucket (${REGION}) ---"; aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1 | head -5
+          echo "--- head-bucket (${REGION}) ---"
+          aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1 | head -5 || true
           # Decisive split: list-buckets needs a valid credential but no rights
           # on any particular bucket. If it succeeds the credential is good and
           # the problem is bucket-specific; if it fails the credential or its
