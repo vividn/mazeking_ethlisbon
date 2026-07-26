@@ -38,7 +38,7 @@ export interface OwnedMaze {
   /**
    * Badge bitfield from `stats(tokenId, owner)` — see `lib/badges.ts`.
    *
-   * Per-HOLDER, not per-token: two owners of the same maze can hold different
+   * Per-SOLVER, not per-token: two solvers of the same maze hold different
    * badges, which is why badges cannot live in the ERC-1155 `uri(tokenId)`
    * metadata (one URI is shared by every holder) and must be surfaced here.
    *
@@ -133,6 +133,10 @@ function decodeImageFromTokenUri(tokenUri: string): string | null {
  * independent of any RPC's eth_getLogs limits. Deployments predating that
  * function revert, in which case we fall back to scanning transfer logs.
  *
+ * Tokens are soulbound, so an address's mint history and its holdings differ
+ * only when a maze has been burned. The balanceOf filter below therefore
+ * exists to drop burned mazes, not transferred ones.
+ *
  * The fallback is floored at the contract's deploy block when we know it:
  * there is no history before deployment, so scanning from there is both
  * complete and as small as possible. Without that floor the scan uses a fixed
@@ -217,7 +221,8 @@ export function useOwnedMazes(
           return;
         }
 
-        // Filter to actually-held tokens (could've been transferred away),
+        // Filter to actually-held tokens. Tokens are soulbound, so the only
+        // way an entry here is no longer held is that the solver burned it.
         // and fetch each tokenURI in parallel.
         const balances = await publicClient.multicall({
           contracts: tokenIds.map((id) => ({

@@ -72,6 +72,10 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
     uint32 public constant BADGE_STONE = 1 << 5; // 5. Stone (max possible moves)
     // Badges 6-31 reserved for future use (placement, special achievements, etc.)
 
+    /// @dev A maze token asserts that its holder solved the maze; transferring
+    ///      it would transfer a claim its recipient did not earn.
+    error NonTransferable();
+
     error WithdrawalFailed();
     error NoBalance();
 
@@ -191,13 +195,14 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
         //     breaks entirely on RPCs with narrow eth_getLogs limits.
         //
         //     Guarded by its own flag rather than `isFirstMint`: isFirstMint is
-        //     `balanceOf == 0`, which becomes true again if a holder transfers
-        //     a maze away, and would push a duplicate on a re-mint. This flag
-        //     is set once and never cleared.
+        //     `balanceOf == 0`, which becomes true again if a holder BURNS a
+        //     maze, and re-solving would then push a duplicate. Tokens are
+        //     soulbound so transfers cannot cause this, but burning is
+        //     deliberately still permitted. The flag is set once, never cleared.
         //
-        //     Records mazes SOLVED, not currently held — a transfer does not
-        //     remove an entry. Callers wanting present ownership should filter
-        //     the result by balanceOf, which is one cheap multicall.
+        //     Records mazes SOLVED, not currently held — burning does not
+        //     remove an entry. Callers wanting present holdings should filter
+        //     by balanceOf, which is one cheap multicall.
         if (!_hasMinted[msg.sender][tokenId]) {
             _hasMinted[msg.sender][tokenId] = true;
             _mintedBy[msg.sender].push(tokenId);
@@ -380,10 +385,19 @@ contract MazeKingNFT is ERC1155, AccessControl, ERC1155Burnable, ERC1155Supply {
 
     // Required overrides for multiple inheritance
 
+    /// @dev Soulbound. A maze token is a claim that *this* account solved the
+    ///      maze, so transferring it would make the claim false — the badges
+    ///      and best-move count hanging off it belong to the solver, not to
+    ///      whoever holds the token.
+    ///
+    ///      Minting (`from == 0`) and burning (`to == 0`) stay open. A holder
+    ///      may discard their own record if they want to; what they cannot do
+    ///      is pass it to someone who did not earn it.
     function _update(address from, address to, uint256[] memory ids, uint256[] memory values)
         internal
         override(ERC1155, ERC1155Supply)
     {
+        if (from != address(0) && to != address(0)) revert NonTransferable();
         super._update(from, to, ids, values);
     }
 

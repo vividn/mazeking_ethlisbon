@@ -322,11 +322,61 @@ contract MazeKingNFTTest is Test {
         assertEq(nft.mazeCountOf(user), 1);
     }
 
-    /// The reason enumeration is guarded by its own flag rather than by
-    /// `isFirstMint`: isFirstMint is `balanceOf == 0`, which becomes true
-    /// again after a transfer. Without the flag, re-solving would append a
-    /// duplicate entry and inflate the collection count.
-    function test_MazesOf_TransferAwayThenResolveDoesNotDuplicate() public {
+    function test_Transfer_Reverts_TokensAreSoulbound() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        // The token asserts that `user` solved this maze. Handing it to someone
+        // else would hand over a claim they did not earn.
+        vm.prank(user);
+        vm.expectRevert(MazeKingNFT.NonTransferable.selector);
+        nft.safeTransferFrom(user, address(0xFEE1), tokenId, 1, "");
+
+        assertEq(nft.balanceOf(user, tokenId), 1);
+        assertEq(nft.balanceOf(address(0xFEE1), tokenId), 0);
+    }
+
+    function test_BatchTransfer_Reverts_TokensAreSoulbound() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        uint256[] memory ids = new uint256[](1);
+        uint256[] memory amounts = new uint256[](1);
+        ids[0] = uint256(mazeHash);
+        amounts[0] = 1;
+
+        vm.prank(user);
+        vm.expectRevert(MazeKingNFT.NonTransferable.selector);
+        nft.safeBatchTransferFrom(user, address(0xFEE1), ids, amounts, "");
+    }
+
+    /// Burning stays open: a holder may discard their own record. What they
+    /// cannot do is pass it to someone who did not earn it.
+    function test_Burn_IsAllowed() public {
+        bytes memory layout = _mockLayout();
+        bytes32 mazeHash = _mockMazeHash(layout);
+        uint256 tokenId = uint256(mazeHash);
+
+        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
+
+        vm.prank(user);
+        nft.burn(user, tokenId, 1);
+        assertEq(nft.balanceOf(user, tokenId), 0);
+    }
+
+    /// Why enumeration is guarded by its own flag rather than by `isFirstMint`:
+    /// isFirstMint is `balanceOf == 0`, which becomes true again after a burn.
+    /// Transfers can no longer cause this, but burning deliberately can, and
+    /// re-solving must not append a duplicate entry.
+    function test_MazesOf_BurnThenResolveDoesNotDuplicate() public {
         bytes memory layout = _mockLayout();
         bytes32 mazeHash = _mockMazeHash(layout);
         uint256 tokenId = uint256(mazeHash);
@@ -336,13 +386,14 @@ contract MazeKingNFTTest is Test {
         assertEq(nft.mazeCountOf(user), 1);
 
         vm.prank(user);
-        nft.safeTransferFrom(user, address(0xFEE1), tokenId, 1, "");
+        nft.burn(user, tokenId, 1);
         assertEq(nft.balanceOf(user, tokenId), 0);
 
-        // Solved again after giving it away — still one entry.
+        // Solved again after discarding it — still one entry.
         vm.prank(user);
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 90, false);
         assertEq(nft.mazeCountOf(user), 1);
+        assertEq(nft.balanceOf(user, tokenId), 1);
     }
 
     function test_MazesOfSlice_Pages() public {
