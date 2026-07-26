@@ -156,7 +156,23 @@ jobs:
             echo "not writable in $R either"
           done
           echo "--- head-bucket (${REGION}) ---"; aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1 | head -5
+          # Decisive split: list-buckets needs a valid credential but no rights
+          # on any particular bucket. If it succeeds the credential is good and
+          # the problem is bucket-specific; if it fails the credential or its
+          # policy scope is at fault, and the bucket is irrelevant.
+          echo "--- list-buckets (credential validity, independent of this bucket) ---"
+          if LB=$(aws s3api list-buckets --endpoint-url "$ENDPOINT" 2>&1); then
+            echo "credential is VALID — these buckets are visible to it:"
+            echo "$LB" | grep -oE '"Name": "[^"]+"' | head -20
+            echo "::endgroup::"
+            echo "::error::The credential works, but '${SCW_BUCKET}' is not writable by it. Compare the name above against SCW_BUCKET_NAME, and confirm the bucket sits in the project this key's policy is scoped to."
+            exit 1
+          fi
+          echo "credential REJECTED for list-buckets as well:"
+          echo "$LB" | head -3
           echo "::endgroup::"
+          echo "::error::The credential is refused even for listing buckets, so this is not about '${SCW_BUCKET}'. Either the access key and secret key are not from the same key pair (Scaleway shows a secret key only once at creation, so a mismatch is easy to introduce), or the key was deleted or rotated. Generating a fresh API key and re-entering BOTH halves is the quickest resolution."
+          exit 1
           echo "::error::Cannot write to '${SCW_BUCKET}' in any Scaleway region. Policies on the key are not the issue if it already carries ObjectStorageFullAccess — check instead that the IAM policy's SCOPE includes the project containing the bucket. Scaleway policies are granted per-project, and a key with full Object Storage rights on project A gets AccessDenied on a bucket in project B. Also confirm the bucket name is exactly right."
           exit 1
 
