@@ -3,6 +3,24 @@ pragma solidity ^0.8.24;
 
 import { Test } from "forge-std/Test.sol";
 import { MazeKingResolver } from "../src/MazeKingResolver.sol";
+import { MazeKingNFT } from "../src/MazeKingNFT.sol";
+import { MazeRenderer } from "../src/MazeRenderer.sol";
+import { MazeConstants } from "../src/MazeConstants.sol";
+
+/// @dev Stands in for the maze contract in the tests that are about name
+///      decoding rather than scorecards. It knows about no mazes, which is the
+///      state every unregistered name is in.
+contract EmptyMazeRegistry {
+    function officialMazes(bytes32) external pure returns (uint256) {
+        return 0;
+    }
+}
+
+contract AlwaysValidVerifier {
+    function verify(bytes calldata, bytes32[] calldata) external pure returns (bool) {
+        return true;
+    }
+}
 
 /// @dev The failure mode this suite is aimed at is quiet. A resolver that
 ///      returns the wrong label, or treats a subname as the apex, does not
@@ -13,10 +31,11 @@ contract MazeKingResolverTest is Test {
     MazeKingResolver public resolver;
 
     address public admin = address(1);
-    address public nft = address(0xBEEF);
+    address public nft;
     uint256 public constant ZKEVM_COINTYPE = 2147484749; // 0x80000000 | 1101
 
     function setUp() public {
+        nft = address(new EmptyMazeRegistry());
         resolver = new MazeKingResolver(admin, nft, ZKEVM_COINTYPE, "https://mazeking.io/s/", 2);
     }
 
@@ -75,13 +94,11 @@ contract MazeKingResolverTest is Test {
         assertEq(_text(_dns3("Zero Knowledge", "mazeking", "eth"), "name"), "Zero Knowledge");
     }
 
-    function test_SeedDescriptionCarriesTheLabel() public view {
-        string memory d = _text(_dns3("snark", "mazeking", "eth"), "description");
-        assertTrue(bytes(d).length > 0);
-        assertEq(
-            d,
-            'The MazeKing maze grown from the name "snark". Its layout is fixed by that name and committed on chain; this record only points at it.'
-        );
+    function test_SeedDescriptionNeedsARegisteredMaze() public view {
+        // A description of a maze nobody registered would describe nothing.
+        // The registered case is covered against the real contract in
+        // MazeKingScorecardTest.
+        assertEq(_text(_dns3("snark", "mazeking", "eth"), "description"), "");
     }
 
     function test_UnknownSeedKeyIsEmptyRatherThanWrong() public view {
@@ -229,5 +246,163 @@ contract MazeKingResolverTest is Test {
         resolver.resolve(
             _dns3("snark", "mazeking", "eth"), abi.encodeWithSelector(0xbc1c58d1, bytes32(0))
         );
+    }
+}
+
+/// @dev The scorecard is only meaningful against a real maze, so this suite
+///      wires the actual NFT and renderer rather than a stub. A resolver that
+///      passes against a mock and fails against the contract it will be pointed
+///      at has tested nothing that matters.
+contract MazeKingScorecardTest is Test {
+    MazeKingResolver public resolver;
+    MazeKingNFT public nft;
+    MazeRenderer public mazeRenderer;
+
+    address public owner = address(1);
+    address public alice = address(0xA11CE);
+    address public bob = address(0xB0B);
+    string public constant SEED = "zero-knowledge";
+    uint256 public constant COINTYPE = 2147484749;
+
+    function setUp() public {
+        vm.prank(owner);
+        nft = new MazeKingNFT(
+            "MazeKing",
+            "MAZE",
+            "https://api.mazeking.xyz/token/",
+            owner,
+            address(new AlwaysValidVerifier())
+        );
+        mazeRenderer = new MazeRenderer();
+        vm.prank(owner);
+        nft.setRenderer(address(mazeRenderer));
+
+        resolver = new MazeKingResolver(owner, address(nft), COINTYPE, "https://mazeking.io/s/", 2);
+    }
+
+    function _layout() internal pure returns (bytes memory layout) {
+        layout = new bytes(MazeConstants.LAYOUT_HEADER_BYTES + 50);
+        uint16[10] memory hdr = [uint16(10), 10, 0, 0, 5, 5, 7, 2, 9, 9];
+        for (uint256 i = 0; i < 10; i++) {
+            layout[i * 2] = bytes1(uint8(hdr[i] >> 8));
+            layout[i * 2 + 1] = bytes1(uint8(hdr[i] & 0xFF));
+        }
+    }
+
+    function _name() internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            uint8(14), "zero-knowledge", uint8(8), "mazeking", uint8(3), "eth", uint8(0)
+        );
+    }
+
+    function _text(string memory key) internal view returns (string memory) {
+        return abi.decode(
+            resolver.resolve(_name(), abi.encodeWithSelector(0x59d1d43c, bytes32(0), key)), (string)
+        );
+    }
+
+    function _noAtt() internal pure returns (MazeKingNFT.MazeAttestation memory) {
+        return MazeKingNFT.MazeAttestation({ seed: "", optimalMoves: 0, signature: "" });
+    }
+
+    function _register(bytes32 mazeHash, bytes memory layout, uint32 optimal) internal {
+        vm.startPrank(owner);
+        nft.registerMaze(SEED, uint256(mazeHash));
+        nft.setLayout(uint256(mazeHash), layout);
+        nft.setOptimalMoves(uint256(mazeHash), optimal);
+        vm.stopPrank();
+    }
+
+    function test_UnregisteredNameDescribesNoMaze() public view {
+        // An empty scorecard presented as though the maze existed would be a
+        // confident lie; better to say nothing.
+        assertEq(_text("avatar"), "");
+        assertEq(_text("first_place"), "");
+        assertEq(_text("description"), "");
+        // The url is still derivable, because it is true of any name.
+        assertEq(_text("url"), "https://mazeking.io/s/zero-knowledge");
+    }
+
+    function test_AvatarIsTheMazeDrawnOnChain() public {
+        bytes memory layout = _layout();
+        bytes32 mazeHash = keccak256(layout);
+        _register(mazeHash, layout, 42);
+
+        string memory avatar = _text("avatar");
+        assertGt(bytes(avatar).length, 100);
+        // A data URI, so there is nothing to host and nothing to expire.
+        assertEq(keccak256(bytes(_prefix(avatar, 26))), keccak256("data:image/svg+xml;base64,"));
+    }
+
+    function _prefix(string memory str, uint256 n) internal pure returns (string memory) {
+        bytes memory b = bytes(str);
+        bytes memory out = new bytes(n);
+        for (uint256 i = 0; i < n; i++) {
+            out[i] = b[i];
+        }
+        return string(out);
+    }
+
+    function test_DescriptionCarriesTheRegisteredOptimum() public {
+        bytes memory layout = _layout();
+        bytes32 mazeHash = keccak256(layout);
+        _register(mazeHash, layout, 42);
+
+        string memory d = _text("description");
+        assertEq(
+            d,
+            'The MazeKing maze grown from the name "zero-knowledge". Its shortest possible route is 42 moves.'
+        );
+    }
+
+    function test_DescriptionSaysSoWhenTheOptimumIsUnknown() public {
+        bytes memory layout = _layout();
+        bytes32 mazeHash = keccak256(layout);
+        vm.startPrank(owner);
+        nft.registerMaze(SEED, uint256(mazeHash));
+        nft.setLayout(uint256(mazeHash), layout);
+        vm.stopPrank();
+
+        assertEq(
+            _text("description"),
+            'The MazeKing maze grown from the name "zero-knowledge". Its shortest route has not been registered yet.'
+        );
+    }
+
+    function test_PodiumRecordsResolveInOrder() public {
+        bytes memory layout = _layout();
+        bytes32 mazeHash = keccak256(layout);
+        _register(mazeHash, layout, 42);
+
+        vm.prank(alice);
+        nft.mintWithProof(hex"00", mazeHash, layout, 90, false, _noAtt());
+        vm.prank(bob);
+        nft.mintWithProof(hex"00", mazeHash, layout, 70, false, _noAtt());
+
+        // Bob solved it better, so Bob leads regardless of who minted first.
+        assertGt(bytes(_text("first_place")).length, 0);
+        assertGt(bytes(_text("second_place")).length, 0);
+        // Only two solvers, so the third place must be absent rather than a
+        // phantom zero address.
+        assertEq(_text("third_place"), "");
+    }
+
+    function test_ScorecardTracksTheChainRatherThanACopy() public {
+        bytes memory layout = _layout();
+        bytes32 mazeHash = keccak256(layout);
+        _register(mazeHash, layout, 42);
+
+        vm.prank(alice);
+        nft.mintWithProof(hex"00", mazeHash, layout, 90, false, _noAtt());
+        string memory before = _text("first_place");
+
+        vm.prank(bob);
+        nft.mintWithProof(hex"00", mazeHash, layout, 60, false, _noAtt());
+        string memory afterSolve = _text("first_place");
+
+        // Nothing was written to the resolver between these two reads. The
+        // record changed because the chain did, which is the whole point of
+        // deriving rather than storing.
+        assertTrue(keccak256(bytes(before)) != keccak256(bytes(afterSolve)));
     }
 }
