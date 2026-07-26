@@ -71,22 +71,50 @@ Create a bucket in Scaleway Object Storage (e.g. region `fr-par`) and enable
 - **error document:** `index.html` (or `404.html`, which the workflow also
   uploads — see *SPA routing* below)
 
-Grant anonymous read. A minimal bucket policy:
+Grant anonymous read with a bucket policy.
+
+**Read this before applying one.** On Scaleway a bucket policy is *authoritative*:
+once set, the bucket owner is **no longer implicitly granted access**. A policy
+that grants only anonymous `GetObject` will lock your own API key out of the
+bucket — IAM permissions, however complete, do not override it. The symptom is
+distinctive and confusing: `list-buckets` still shows the bucket, while
+`head-bucket` and every write return `403 Forbidden`.
+
+Scaleway policies also differ from AWS in shape: resources are bucket names
+rather than ARNs, and principals are `SCW` identifiers.
+
+The policy must therefore grant **both** the application that deploys **and**
+anonymous readers:
 
 ```json
 {
-  "Version": "2012-10-17",
+  "Version": "2023-04-17",
+  "Id": "mazeking-static-site",
   "Statement": [
+    {
+      "Sid": "DeployerFullAccess",
+      "Effect": "Allow",
+      "Principal": { "SCW": "application_id:YOUR-APPLICATION-ID" },
+      "Action": "s3:*",
+      "Resource": ["YOUR-BUCKET", "YOUR-BUCKET/*"]
+    },
     {
       "Sid": "PublicRead",
       "Effect": "Allow",
       "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::YOUR-BUCKET/*"
+      "Action": ["s3:GetObject"],
+      "Resource": ["YOUR-BUCKET/*"]
     }
   ]
 }
 ```
+
+`YOUR-APPLICATION-ID` is the IAM application that owns the API key — use
+`user_id:` instead if the key belongs to a user rather than an application.
+
+**To unblock a bucket that has already locked out its deployer:** delete the
+bucket policy. Access reverts to IAM, so the key works again immediately; the
+site simply is not publicly readable until a corrected policy is applied.
 
 ### 2. Cloudflare
 
