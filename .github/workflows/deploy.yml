@@ -71,7 +71,7 @@ jobs:
         env:
           SCW_ACCESS_KEY_ID: ${{ secrets.SCW_ACCESS_KEY_ID }}
           SCW_SECRET_ACCESS_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
           hint="set it in the 'workflow_env' environment, and confirm this job still declares environment: workflow_env"
@@ -87,32 +87,50 @@ jobs:
       # requiring either would reintroduce a permission the upload does not use.
       - name: Preflight — verify bucket is writable
         env:
-          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -uo pipefail
           REGION="${SCW_REGION:-fr-par}"
           ENDPOINT="https://s3.${REGION}.scw.cloud"
           echo "endpoint : ${ENDPOINT}"
+          echo "NOTE: if the region above prints as ***, it is stored as a secret."
+          echo "      It is not sensitive; storing it as a variable makes it readable here."
 
           case "$SCW_BUCKET" in
             s3://*) echo "::error::SCW_BUCKET must be the bare bucket name, without the s3:// prefix." ; exit 1 ;;
             *" "*)  echo "::error::SCW_BUCKET contains whitespace." ; exit 1 ;;
           esac
 
-          if echo ok | aws s3 cp - "s3://${SCW_BUCKET}/.deploy-preflight" --endpoint-url "$ENDPOINT" >/dev/null 2>&1; then
+          probe() {  # $1 = region -> 0 if the bucket is writable there
+            aws s3 cp - "s3://${SCW_BUCKET}/.deploy-preflight" \
+              --endpoint-url "https://s3.$1.scw.cloud" >/dev/null 2>&1 <<< ok
+          }
+
+          if probe "$REGION"; then
             aws s3 rm "s3://${SCW_BUCKET}/.deploy-preflight" --endpoint-url "$ENDPOINT" >/dev/null 2>&1 || true
-            echo "preflight OK — bucket is writable"
+            echo "preflight OK — bucket is writable in ${REGION}"
             exit 0
           fi
 
-          # Writing failed. Characterise why, so the run explains itself instead
-          # of leaving four indistinguishable candidates.
+          # Writing failed. Scaleway answers AccessDenied for a bucket in another
+          # region just as it does for a missing permission, so the message alone
+          # cannot separate them. Probe the other regions: if one succeeds, the
+          # cause is settled and named.
           echo "::group::diagnosis"
-          echo "--- head-bucket ---"; aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1 | head -5
-          echo "--- list-objects ---"; aws s3api list-objects-v2 --bucket "$SCW_BUCKET" --max-items 1 --endpoint-url "$ENDPOINT" 2>&1 | head -5
+          for R in fr-par nl-ams pl-waw; do
+            [ "$R" = "$REGION" ] && continue
+            if probe "$R"; then
+              aws s3 rm "s3://${SCW_BUCKET}/.deploy-preflight" --endpoint-url "https://s3.$R.scw.cloud" >/dev/null 2>&1 || true
+              echo "::endgroup::"
+              echo "::error::The bucket is writable in region '${R}', not '${REGION}'. Set SCW_REGION to '${R}' — preferably as a repository variable so it is readable in these logs."
+              exit 1
+            fi
+            echo "not writable in $R either"
+          done
+          echo "--- head-bucket (${REGION}) ---"; aws s3api head-bucket --bucket "$SCW_BUCKET" --endpoint-url "$ENDPOINT" 2>&1 | head -5
           echo "::endgroup::"
-          echo "::error::Cannot write to '${SCW_BUCKET}' at ${ENDPOINT}. Scaleway returns AccessDenied for a bucket in another region AND for one in another project, so check both: (1) the bucket's region matches SCW_REGION, (2) the API key was created in the same Scaleway project as the bucket, (3) the key has ObjectStorage write access."
+          echo "::error::Cannot write to '${SCW_BUCKET}' in any Scaleway region. Policies on the key are not the issue if it already carries ObjectStorageFullAccess — check instead that the IAM policy's SCOPE includes the project containing the bucket. Scaleway policies are granted per-project, and a key with full Object Storage rights on project A gets AccessDenied on a bucket in project B. Also confirm the bucket name is exactly right."
           exit 1
 
       # Upload order is deliberate: assets first, index.html last. index.html
@@ -124,8 +142,8 @@ jobs:
       # grows inconveniently (see docs/DEPLOY-HOSTING.md).
       - name: Upload hashed assets (immutable)
         env:
-          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
           : "${SCW_BUCKET:?empty — set it in the 'workflow_env' environment, and confirm this job declares environment: workflow_env}"
@@ -147,8 +165,8 @@ jobs:
       # breaks proof generation at runtime while the page still loads fine.
       - name: Upload WebAssembly with explicit content type
         env:
-          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
           ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
@@ -166,8 +184,8 @@ jobs:
       # points browsers at asset hashes that may no longer be current.
       - name: Upload index.html (no-cache)
         env:
-          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
           ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
@@ -181,8 +199,8 @@ jobs:
       # error document makes the SPA resolve them client-side.
       - name: Publish SPA fallback (404 -> index.html)
         env:
-          SCW_BUCKET: ${{ secrets.SCW_BUCKET }}
-          SCW_REGION: ${{ secrets.SCW_REGION }}
+          SCW_BUCKET: ${{ vars.SCW_BUCKET || secrets.SCW_BUCKET }}
+          SCW_REGION: ${{ vars.SCW_REGION || secrets.SCW_REGION }}
         run: |
           set -euo pipefail
           ENDPOINT="https://s3.${SCW_REGION:-fr-par}.scw.cloud"
