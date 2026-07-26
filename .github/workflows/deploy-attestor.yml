@@ -175,7 +175,27 @@ jobs:
             environment-variables.CHAIN_ID="$CHAIN_ID" >/dev/null
 
           zip -qr /tmp/attestor.zip .
-          scw function function deploy "$fn_id" zip-file=/tmp/attestor.zip
+          size=$(stat -c%s /tmp/attestor.zip)
+          echo "package: ${size} bytes"
+
+          # Uploading is a three-step handshake, not a flag on deploy: ask for a
+          # presigned URL sized to the exact archive, PUT the archive there, and
+          # only then tell Scaleway to deploy what was uploaded. `deploy` takes
+          # no zip-file argument at all.
+          url=$(scw function function get-upload-url "$fn_id" zip-size="$size" -o json | jq -r '.url')
+          if [ -z "$url" ] || [ "$url" = "null" ]; then
+            echo "::error::Scaleway returned no upload URL"
+            exit 1
+          fi
+
+          # The presigned URL is signed for this content type and this exact
+          # length; either one differing is rejected.
+          curl -fsS -X PUT \
+            -H "Content-Type: application/octet-stream" \
+            --upload-file /tmp/attestor.zip \
+            "$url"
+
+          scw function function deploy "$fn_id"
 
           url=$(scw function function get "$fn_id" -o json | jq -r '.domain_name')
           echo "attestor deployed at https://$url"
