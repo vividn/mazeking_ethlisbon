@@ -133,9 +133,8 @@ function decodeImageFromTokenUri(tokenUri: string): string | null {
  * independent of any RPC's eth_getLogs limits. Deployments predating that
  * function revert, in which case we fall back to scanning transfer logs.
  *
- * Tokens are soulbound, so an address's mint history and its holdings differ
- * only when a maze has been burned. The balanceOf filter below therefore
- * exists to drop burned mazes, not transferred ones.
+ * Tokens are mint-only — not transferable and not burnable — so an address's
+ * mint history IS its holdings. `mazesOf` needs no filtering.
  *
  * The fallback is floored at the contract's deploy block when we know it:
  * there is no history before deployment, so scanning from there is both

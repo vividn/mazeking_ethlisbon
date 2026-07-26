@@ -357,9 +357,12 @@ contract MazeKingNFTTest is Test {
         nft.safeBatchTransferFrom(user, address(0xFEE1), ids, amounts, "");
     }
 
-    /// Burning stays open: a holder may discard their own record. What they
-    /// cannot do is pass it to someone who did not earn it.
-    function test_Burn_IsAllowed() public {
+    /// Burning is blocked too, and not out of strictness. `stats` survives a
+    /// burn, so the solve is never actually erased — while the mint path reads
+    /// `balanceOf == 0` as a first solve, so re-solving afterwards overwrites
+    /// minMoves and resets timesSolved. Measured before this was disallowed: a
+    /// 22-move best became 90, and a count of 2 became 1.
+    function test_Burn_Reverts_TokensAreMintOnly() public {
         bytes memory layout = _mockLayout();
         bytes32 mazeHash = _mockMazeHash(layout);
         uint256 tokenId = uint256(mazeHash);
@@ -367,33 +370,36 @@ contract MazeKingNFTTest is Test {
         vm.prank(user);
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
 
+        // ERC1155Burnable is no longer inherited, so there is no burn entry
+        // point at all. The underlying transfer-to-zero is refused too —
+        // by OpenZeppelin's own zero-address receiver check, which fires
+        // before _update, so the specific error is ERC1155InvalidReceiver
+        // rather than NonTransferable. What matters is that the balance is
+        // untouched by either route.
         vm.prank(user);
-        nft.burn(user, tokenId, 1);
-        assertEq(nft.balanceOf(user, tokenId), 0);
+        vm.expectRevert();
+        nft.safeTransferFrom(user, address(0), tokenId, 1, "");
+
+        assertEq(nft.balanceOf(user, tokenId), 1);
     }
 
-    /// Why enumeration is guarded by its own flag rather than by `isFirstMint`:
-    /// isFirstMint is `balanceOf == 0`, which becomes true again after a burn.
-    /// Transfers can no longer cause this, but burning deliberately can, and
-    /// re-solving must not append a duplicate entry.
-    function test_MazesOf_BurnThenResolveDoesNotDuplicate() public {
+    /// A solver's best run cannot be destroyed by any sequence of actions,
+    /// which is the property blocking burn is really protecting.
+    function test_BestScoreSurvivesResolving() public {
         bytes memory layout = _mockLayout();
         bytes32 mazeHash = _mockMazeHash(layout);
         uint256 tokenId = uint256(mazeHash);
 
-        vm.prank(user);
+        vm.startPrank(user);
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 100, false);
-        assertEq(nft.mazeCountOf(user), 1);
-
-        vm.prank(user);
-        nft.burn(user, tokenId, 1);
-        assertEq(nft.balanceOf(user, tokenId), 0);
-
-        // Solved again after discarding it — still one entry.
-        vm.prank(user);
+        nft.mintWithProof(hex"1234567890", mazeHash, layout, 22, false);
         nft.mintWithProof(hex"1234567890", mazeHash, layout, 90, false);
+        vm.stopPrank();
+
+        (uint16 best, uint16 solves,,) = nft.stats(tokenId, user);
+        assertEq(best, 22);
+        assertEq(solves, 3);
         assertEq(nft.mazeCountOf(user), 1);
-        assertEq(nft.balanceOf(user, tokenId), 1);
     }
 
     function test_MazesOfSlice_Pages() public {
