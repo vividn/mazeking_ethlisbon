@@ -9,6 +9,7 @@ import { HeaderSeedInput } from './HeaderSeedInput';
 import { HistorySidebar } from './HistorySidebar';
 import { MazeSizeWarning } from './MazeSizeWarning';
 import { Wordmark } from './Wordmark';
+import { WalletButton } from './WalletButton';
 import { pickTextColor } from '../lib/contrastText';
 import { DEFAULT_SEED } from '../App';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -390,6 +391,7 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
               <>
                 <div style={styles.headerSpacer} />
                 <div style={styles.iconButtonRow}>
+                  <WalletButton colors={colors} />
                   <button
                     onClick={handleCopyLink}
                     style={{
