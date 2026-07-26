@@ -91,8 +91,8 @@ jobs:
           REGISTRAR_PRIVATE_KEY: ${{ secrets.REGISTRAR_PRIVATE_KEY }}
           NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
           CHAIN_ID: ${{ vars.CHAIN_ID }}
-          SCW_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
-          SCW_ORGANIZATION_ID: ${{ vars.SCW_ORGANIZATION_ID }}
+          SCW_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID || vars.SCW_PROJECT_ID }}
+          SCW_ORGANIZATION_ID: ${{ secrets.SCW_ORGANIZATION_ID || vars.SCW_ORGANIZATION_ID }}
         run: |
           # Report every missing value at once. Failing on the first one turns a
           # single fix into several round trips through a 3-minute workflow.
@@ -103,9 +103,13 @@ jobs:
           [ -n "$CHAIN_ID" ] || missing="$missing CHAIN_ID(var)"
           # The Scaleway CLI needs both, and reports a missing organization id
           # three steps later as "default organization ID cannot be empty" --
-          # an SDK message that names neither the variable nor the workflow.
-          [ -n "$SCW_PROJECT_ID" ] || missing="$missing SCW_PROJECT_ID(var)"
-          [ -n "$SCW_ORGANIZATION_ID" ] || missing="$missing SCW_ORGANIZATION_ID(var)"
+          # an SDK message that names neither the setting nor the workflow.
+          #
+          # Read from secrets first, then vars. An organization id is not a
+          # credential, but it identifies an account, and whether that is worth
+          # concealing is the operator's judgement rather than this file's.
+          [ -n "$SCW_PROJECT_ID" ] || missing="$missing SCW_PROJECT_ID(secret or var)"
+          [ -n "$SCW_ORGANIZATION_ID" ] || missing="$missing SCW_ORGANIZATION_ID(secret or var)"
           if [ -n "$missing" ]; then
             echo "::error::missing configuration:$missing"
             echo "See docs/REGISTRAR.md. Note that environment-scoped values are"
@@ -125,8 +129,8 @@ jobs:
         env:
           SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY_ID }}
           SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
-          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
-          SCW_DEFAULT_ORGANIZATION_ID: ${{ vars.SCW_ORGANIZATION_ID }}
+          SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID || vars.SCW_PROJECT_ID }}
+          SCW_DEFAULT_ORGANIZATION_ID: ${{ secrets.SCW_ORGANIZATION_ID || vars.SCW_ORGANIZATION_ID }}
           SCW_DEFAULT_REGION: ${{ vars.SCW_REGION || 'fr-par' }}
           REGISTRAR_PRIVATE_KEY: ${{ secrets.REGISTRAR_PRIVATE_KEY }}
           NFT_ADDRESS: ${{ vars.NFT_ADDRESS }}
@@ -180,7 +184,7 @@ jobs:
         env:
           SCW_ACCESS_KEY: ${{ secrets.SCW_ACCESS_KEY_ID }}
           SCW_SECRET_KEY: ${{ secrets.SCW_SECRET_ACCESS_KEY }}
-          SCW_DEFAULT_PROJECT_ID: ${{ vars.SCW_PROJECT_ID }}
+          SCW_DEFAULT_PROJECT_ID: ${{ secrets.SCW_PROJECT_ID || vars.SCW_PROJECT_ID }}
           SCW_DEFAULT_REGION: ${{ vars.SCW_REGION || 'fr-par' }}
           NAMESPACE: ${{ vars.SCW_FUNCTION_NAMESPACE || 'mazeking' }}
         run: |

@@ -144,8 +144,13 @@ Variables (all public by nature):
 | `REGISTRAR_ADDRESS` | The signer's address. Only needed to grant the role, but worth recording so it is greppable when checking which key is live. |
 | `NFT_ADDRESS` | The deployment the function signs for. |
 | `CHAIN_ID` | Likewise. |
-| `SCW_PROJECT_ID` / `SCW_ORGANIZATION_ID` | Scaleway target. |
+
 | `SCW_REGION` | Defaults to `fr-par`. |
+
+`SCW_PROJECT_ID` and `SCW_ORGANIZATION_ID` may live in **either** store — the
+workflow reads secrets first and falls back to variables. Neither is a
+credential, but both identify an account, and whether that is worth concealing
+is the operator's judgement rather than this file's.
 | `SCW_FUNCTION_NAMESPACE` | Defaults to `mazeking`. |
 | `VITE_ATTESTOR_URL` | The deployed function's URL, read by the **frontend** deploy. |
 
