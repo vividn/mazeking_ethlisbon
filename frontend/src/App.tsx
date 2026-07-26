@@ -13,6 +13,7 @@ import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Game, type ReplayPayload } from './components/Game';
 import { MyMazesPage } from './components/MyMazesPage';
+import { AdminPage } from './components/AdminPage';
 import { GalleryPage } from './components/GalleryPage';
 import { TestnetBanner } from './components/TestnetBanner';
 import { DebugWinModalButton } from './components/DebugWinModalButton';
@@ -172,6 +173,11 @@ function App() {
               <Route path="s/:seed" element={null} />
               <Route path="mazes" element={<MyMazesPage />} />
               <Route path="gallery" element={<GalleryPage />} />
+              {/* Not linked from anywhere: it is an operator tool, not a page
+                  of the game. Nothing here is privileged by being hidden --
+                  every write reverts without OWNER_ROLE -- so the obscurity is
+                  about keeping it out of a player's way, not about access. */}
+              <Route path="admin" element={<AdminPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
