@@ -245,6 +245,69 @@ deploy-sepolia:
 # Invoke via `scripts/with-base.sh just deploy-base` so BASE_RPC_URL and
 # PRIVATE_KEY are loaded from ~/.config/gt-mazeking/base.env. See DEPLOY.md.
 # Regenerates the verifier first (ma-6ff); skip with SKIP_VERIFIER_GEN=1.
+# Deploy contracts to Ethereum mainnet (chain 1). Real money.
+#
+# Deploy from a THROWAWAY key and pass OWNER, so the key that touches this
+# script never controls the contract. The deployer ends the run holding no
+# roles at all; OWNER holds every one of them.
+#
+#   PRIVATE_KEY=0x<burner> OWNER=0x<your wallet> just deploy-mainnet
+#
+# Rehearse on Sepolia with the same bytecode first. A second mainnet deploy is
+# cheap, but a first one you were not ready for still costs you the addresses
+# you already told people about.
+deploy-mainnet:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ -z "${MAINNET_RPC_URL:-}" ]; then
+        echo -e "{{RED}}[deploy]{{NC}} Error: MAINNET_RPC_URL not set"
+        exit 1
+    fi
+
+    if [ -z "${PRIVATE_KEY:-}" ]; then
+        echo -e "{{RED}}[deploy]{{NC}} Error: PRIVATE_KEY not set"
+        exit 1
+    fi
+
+    if [ -z "${OWNER:-}" ]; then
+        echo -e "{{RED}}[deploy]{{NC}} Error: OWNER not set"
+        echo "Refusing to deploy to mainnet with the deploy key as owner."
+        echo "Set OWNER to the wallet that should hold the roles."
+        exit 1
+    fi
+
+    # Say out loud what is about to happen, with the numbers, and require a
+    # deliberate answer. Everything else in this file is reversible.
+    deployer=$(cast wallet address --private-key "$PRIVATE_KEY")
+    balance=$(cast balance "$deployer" --rpc-url "$MAINNET_RPC_URL")
+    gas=$(cast gas-price --rpc-url "$MAINNET_RPC_URL")
+    echo -e "{{YELLOW}}[deploy]{{NC}} MAINNET deployment"
+    echo "  deployer: $deployer"
+    echo "  balance:  $(cast to-unit "$balance" ether) ETH"
+    echo "  owner:    $OWNER"
+    echo "  gas:      $(cast to-unit "$gas" gwei) gwei"
+    echo ""
+    read -r -p "Type 'mainnet' to continue: " confirm
+    if [ "$confirm" != "mainnet" ]; then
+        echo -e "{{RED}}[deploy]{{NC}} Aborted."
+        exit 1
+    fi
+
+    if [ "${SKIP_VERIFIER_GEN:-0}" != "1" ]; then
+        just generate-verifier
+    fi
+
+    echo -e "{{BLUE}}[deploy]{{NC}} Deploying to Ethereum mainnet..."
+    just _deploy-contracts "$MAINNET_RPC_URL" "mainnet"
+    just _generate-frontend-config 1
+    echo -e "{{GREEN}}[deploy]{{NC}} Mainnet deployment complete!"
+    echo ""
+    echo "Next, at /admin signed by $OWNER:"
+    echo "  1. grant REGISTRAR_ROLE to the attestor address"
+    echo "  2. set NFT_ADDRESS and CHAIN_ID=1 as GitHub variables"
+    echo "  3. point mazeking.eth's resolver at the deployed MazeKingResolver"
+
 deploy-base:
     #!/usr/bin/env bash
     set -euo pipefail
