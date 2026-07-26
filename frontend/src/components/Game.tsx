@@ -391,6 +391,26 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
               <>
                 <div style={styles.headerSpacer} />
                 <div style={styles.iconButtonRow}>
+                  {gameState.gameWon && winModalDismissed && (
+                    <button
+                      onClick={() => setWinModalDismissed(false)}
+                      data-testid="reopen-win-modal"
+                      style={{
+                        ...styles.iconButton,
+                        width: 'auto',
+                        padding: '0 12px',
+                        gap: '6px',
+                        borderColor: colors.crownBackgroundColor,
+                        color: colors.crownBackgroundColor,
+                        fontWeight: 700,
+                        letterSpacing: '0.5px',
+                      }}
+                      title="Reopen your coronation"
+                      aria-label="Reopen coronation"
+                    >
+                      👑 Winner
+                    </button>
+                  )}
                   <WalletButton colors={colors} />
                   <button
                     onClick={handleCopyLink}
@@ -544,6 +564,7 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
           enableTouchTransform={isMobile}
           enableMouseTransform={!isMobile}
           showKinglyHint={showKinglyHint}
+          playerWearsCrown={gameState.gameWon}
         />
       </div>
 
@@ -564,22 +585,14 @@ export function Game({ initialSeed, onSeedChange, active, replay }: GameProps) {
       <WinModal
         isOpen={gameState.gameWon && !winModalDismissed}
         moveCount={gameState.moveCount}
-        onNewMaze={handleNewMaze}
         onDismiss={() => setWinModalDismissed(true)}
         colors={colors}
-        onCopyLink={handleCopyLink}
-        copied={copied}
         maze={maze}
         moves={gameState.moves}
         startPos={initialPositions.startPos}
         robePos={initialPositions.robePos}
         scepterPos={initialPositions.scepterPos}
         goalPos={initialPositions.goalPos}
-        visited={visited}
-        onViewCollection={() => {
-          setWinModalDismissed(true);
-          navigate('/mazes');
-        }}
       />
 
       <HistorySidebar

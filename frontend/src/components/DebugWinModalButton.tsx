@@ -12,7 +12,13 @@ const DEBUG_SEED = 'zkDEBUG-winmodal';
  * through a maze. Hidden in production by `isLocalhost()`.
  */
 export function DebugWinModalButton() {
-  const [open, setOpen] = useState(false);
+  // `?debugwin=1` opens it on load, so the modal can be captured by a headless
+  // browser that cannot click. Localhost-only, like the button itself.
+  const [open, setOpen] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('debugwin') === '1'
+  );
   const [iteration, setIteration] = useState(0);
 
   const generated = useMemo(() => generateMaze(DEBUG_SEED), []);
@@ -65,15 +71,6 @@ export function DebugWinModalButton() {
           robePos={generated.robePos}
           scepterPos={generated.scepterPos}
           goalPos={generated.goalPos}
-          visited={new Set([`${generated.goalPos.x},${generated.goalPos.y}`])}
-          copied={false}
-          onCopyLink={() => {
-            console.log('[DEBUG] share clicked');
-          }}
-          onNewMaze={() => setOpen(false)}
-          onViewCollection={() => {
-            console.log('[DEBUG] collection clicked');
-          }}
           onDismiss={() => setOpen(false)}
         />
       )}
