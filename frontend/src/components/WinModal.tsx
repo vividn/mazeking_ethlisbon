@@ -1,29 +1,20 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { ColorScheme, MazeData, Move, Position } from '../types';
 import { useZkProof } from '../hooks/useZkProof';
-import { Maze } from './Maze';
 import { MintBlock } from './MintBlock';
-import { NavBlock } from './NavBlock';
-import { ShareBlock } from './ShareBlock';
-import { computeOptimalMoves, tierFromMoveCount } from '../lib/mazeSolver';
 import { pickTextColor } from '../lib/contrastText';
 import kingUrl from '../glyphs/king.png?url';
 
 interface WinModalProps {
   isOpen: boolean;
   moveCount: number;
-  onNewMaze: () => void;
   colors: ColorScheme;
-  onCopyLink: () => void;
-  copied: boolean;
   maze: MazeData;
   moves: Move[];
   startPos: Position;
   robePos: Position;
   scepterPos: Position;
   goalPos: Position;
-  visited: Set<string>;
-  onViewCollection: () => void;
   /** Close the modal (e.g. via Escape or backdrop). */
   onDismiss: () => void;
   /**
@@ -143,18 +134,13 @@ function ConfettiCanvas({ colors, active }: ConfettiCanvasProps) {
 export function WinModal({
   isOpen,
   moveCount,
-  onNewMaze,
   colors,
-  onCopyLink,
-  copied,
   maze,
   moves,
   startPos,
   robePos,
   scepterPos,
   goalPos,
-  visited,
-  onViewCollection,
   onDismiss,
   mockMode = false,
 }: WinModalProps) {
@@ -166,29 +152,6 @@ export function WinModal({
     mockMode,
   });
 
-  const crownTier = useMemo(() => {
-    if (!isOpen) return undefined;
-    const optimal = computeOptimalMoves(
-      maze,
-      startPos,
-      robePos,
-      scepterPos,
-      goalPos
-    );
-    return tierFromMoveCount(moveCount, optimal);
-  }, [isOpen, maze, startPos, robePos, scepterPos, goalPos, moveCount]);
-
-  // Delay mounting the maze thumbnail until after the modal slide-in animation
-  // settles, so canvas measurement uses final post-transform dimensions.
-  const [thumbReady, setThumbReady] = useState(false);
-  useEffect(() => {
-    if (!isOpen) {
-      setThumbReady(false);
-      return;
-    }
-    const t = window.setTimeout(() => setThumbReady(true), 420);
-    return () => window.clearTimeout(t);
-  }, [isOpen]);
 
   // Escape closes the modal. Skip while a real proof is mid-flight so we
   // don't tear down the in-flight pipeline mid-keypress.
@@ -213,9 +176,23 @@ export function WinModal({
 
   const subtitle = getSubtitleVariant(moveCount, maze);
 
-  const handleNewMaze = () => {
-    resetProof();
-    onNewMaze();
+  const closeButtonStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '8px',
+    right: '10px',
+    zIndex: 2,
+    width: '32px',
+    height: '32px',
+    lineHeight: '28px',
+    fontSize: '24px',
+    fontFamily: 'monospace',
+    background: 'transparent',
+    color: pickTextColor(colors.textBackgroundColor),
+    border: '1px solid',
+    borderColor: pickTextColor(colors.textBackgroundColor),
+    borderRadius: '50%',
+    cursor: 'pointer',
+    opacity: 0.75,
   };
 
   const overlayStyle: React.CSSProperties = {
@@ -285,57 +262,10 @@ export function WinModal({
     fontStyle: 'italic',
   };
 
-  const certificateBoxStyle: React.CSSProperties = {
-    backgroundColor: colors.textBackgroundColor,
-    borderRadius: '12px',
-    padding: '14px',
-    marginBottom: '14px',
-    boxShadow: `inset 0 0 0 2px ${colors.uiAccentColor}, 0 8px 24px rgba(0, 0, 0, 0.25)`,
-    position: 'relative',
-  };
 
-  const thumbnailStyle: React.CSSProperties = {
-    width: '100%',
-    maxWidth: '280px',
-    aspectRatio: '1 / 1',
-    margin: '0 auto',
-    borderRadius: '6px',
-    overflow: 'hidden',
-    backgroundColor: '#1a1a1a',
-  };
 
-  const stampStyle: React.CSSProperties = {
-    position: 'absolute',
-    bottom: '-14px',
-    right: '-10px',
-    backgroundColor: colors.goalColor,
-    color: pickTextColor(colors.goalColor),
-    borderRadius: '50%',
-    width: '78px',
-    height: '78px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontWeight: 'bold',
-    boxShadow: `0 4px 14px rgba(0, 0, 0, 0.35), 0 0 0 3px ${colors.pathColor}, 0 0 0 5px ${colors.goalColor}`,
-    transform: 'rotate(-8deg)',
-    border: 'none',
-    lineHeight: 1,
-  };
 
-  const stampNumStyle: React.CSSProperties = {
-    fontSize: '28px',
-    color: pickTextColor(colors.goalColor),
-  };
 
-  const stampLabelStyle: React.CSSProperties = {
-    fontSize: '9px',
-    textTransform: 'uppercase',
-    letterSpacing: '1.2px',
-    color: pickTextColor(colors.goalColor),
-    marginTop: '2px',
-  };
 
   return (
     <>
@@ -414,14 +344,32 @@ export function WinModal({
         `}
       </style>
       <ConfettiCanvas colors={colors} active={isOpen} />
-      <div style={overlayStyle}>
+      {/* Clicking the backdrop dismisses. The win state is not lost by
+          closing — the crown stays on the player and the header keeps a way
+          back in — so dismissing is how you go start another maze or visit
+          your collection. */}
+      <div
+        style={overlayStyle}
+        onClick={onDismiss}
+        data-testid="win-modal-overlay"
+      >
         <div
           className="win-modal"
           style={modalStyle}
           role="dialog"
           aria-labelledby="win-title"
           aria-modal="true"
+          onClick={(e) => e.stopPropagation()}
         >
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Close"
+            data-testid="win-modal-close"
+            style={closeButtonStyle}
+          >
+            ×
+          </button>
           {/* Hero */}
           <div className="win-hero-row">
             <img
@@ -436,41 +384,10 @@ export function WinModal({
                 Coronation!
               </h2>
               <p style={heroSubtitleStyle}>
-                This KaZtle is yours, and you can prove it!
+                This KaZtle is yours in {moveCount} moves — and you can prove
+                it!
               </p>
               <p style={variantSubtitleStyle}>{subtitle}</p>
-            </div>
-          </div>
-
-          {/* Box 1: Certificate */}
-          <div style={certificateBoxStyle}>
-            <div style={thumbnailStyle}>
-              {thumbReady && (
-                <Maze
-                  maze={maze}
-                  playerPos={goalPos}
-                  robePos={null}
-                  scepterPos={null}
-                  goalPos={goalPos}
-                  hasRobe={true}
-                  hasScepter={true}
-                  colors={colors}
-                  zoom={1}
-                  visited={visited}
-                  showEntities={true}
-                  enableTouchTransform={false}
-                  playerWearsCrown={true}
-                  crownTier={crownTier}
-                />
-              )}
-            </div>
-            <div
-              className="win-stamp"
-              style={stampStyle}
-              aria-label={`Solved in ${moveCount} moves`}
-            >
-              <span style={stampNumStyle}>{moveCount}</span>
-              <span style={stampLabelStyle}>moves</span>
             </div>
           </div>
 
@@ -482,18 +399,7 @@ export function WinModal({
             startProofGeneration={startProofGeneration}
             resetProof={resetProof}
             mockMode={mockMode}
-          >
-            <NavBlock
-              colors={colors}
-              onViewCollection={onViewCollection}
-              onNewMaze={handleNewMaze}
-            />
-            <ShareBlock
-              colors={colors}
-              copied={copied}
-              onCopyLink={onCopyLink}
-            />
-          </MintBlock>
+          />
         </div>
       </div>
     </>

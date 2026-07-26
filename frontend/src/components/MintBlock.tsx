@@ -333,7 +333,7 @@ export function MintBlock({
 
   return (
     <div style={boxStyle} data-testid="proof-actions-box">
-      <div className="win-proof-row" style={proofBoxInnerStyle}>
+      <div className="win-proof-row" style={{ ...proofBoxInnerStyle, flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
         <div className="win-proof-column" style={proofColumnStyle}>
           {proofReady && proofState.imageDataUrl && proofState.proof ? (
             <ProofImage
@@ -348,21 +348,7 @@ export function MintBlock({
                 accentColor={colors.uiAccentColor}
                 animated={false}
                 ariaLabel="Generate zero-knowledge proof"
-              >
-                <button
-                  type="button"
-                  className="win-action-button"
-                  style={generateProofButtonStyle}
-                  onClick={() => void startProofGeneration()}
-                  data-testid="generate-proof-button"
-                  aria-label="Generate zero-knowledge proof of your solution"
-                >
-                  Generate ZK Proof
-                </button>
-              </ProofPlaceholder>
-              <div style={helperTextStyle} aria-live="polite">
-                {' '}
-              </div>
+              />
             </>
           ) : (
             <>
@@ -381,16 +367,47 @@ export function MintBlock({
           )}
         </div>
 
-        <div style={buttonColumnStyle}>
+        <div style={{ ...buttonColumnStyle, width: '100%', alignItems: 'stretch' }}>
+          {/* Generating the proof is the first action and belongs directly
+              under the window it fills, rather than inside the placeholder
+              where it read as part of the artwork. */}
+          {proofState.stage === 'idle' && (
+            <button
+              type="button"
+              className="win-action-button"
+              style={generateProofButtonStyle}
+              onClick={() => void startProofGeneration()}
+              data-testid="generate-proof-button"
+              aria-label="Generate zero-knowledge proof of your solution"
+            >
+              Generate ZK Proof
+            </button>
+          )}
+          {/* Connecting is its own step rather than a label the mint button
+              borrows, so the order of operations is visible before minting. */}
+          {!isConnected && !mockMode && (
+            <button
+              type="button"
+              className="win-action-button"
+              style={mintButtonStyle}
+              onClick={() => {
+                const first = connectors[0];
+                if (first) connect({ connector: first });
+              }}
+              data-testid="win-connect-wallet"
+            >
+              Connect Wallet
+            </button>
+          )}
           <button
             className="win-action-button"
             style={mintButtonStyle}
             onClick={handleMint}
-            disabled={mintDisabled}
+            disabled={mintDisabled || (!isConnected && !mockMode)}
             aria-label={mintLabel}
             data-testid="mint-button"
           >
-            {mintLabel}
+            {!isConnected && !mockMode ? 'Mint NFT' : mintLabel}
           </button>
           {mintDisabledReason && (
             <div style={reasonTextStyle}>{mintDisabledReason}</div>
