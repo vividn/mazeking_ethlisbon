@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { keccak256, toBytes } from 'viem';
-import { usePublicClient, useAccount } from 'wagmi';
+import { useReadChain } from './useReadChain';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
-import { getContractAddress } from '../lib/contracts';
 
 /**
  * Check the maze we generated against the one the chain says this name means.
@@ -41,11 +40,8 @@ export function useOfficialLayout(
   seed: string | null | undefined,
   localLayout: Uint8Array | null | undefined
 ): LayoutCheck {
-  const { chain } = useAccount();
-  const publicClient = usePublicClient();
+  const { publicClient, nft } = useReadChain();
   const [result, setResult] = useState<LayoutCheck>({ state: 'checking' });
-
-  const nft = chain ? getContractAddress(chain.id, 'nft') : undefined;
 
   useEffect(() => {
     let cancelled = false;

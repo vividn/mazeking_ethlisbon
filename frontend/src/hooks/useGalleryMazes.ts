@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAccount, usePublicClient } from 'wagmi';
+import { useReadChain } from './useReadChain';
 import type { Address, Hex, PublicClient } from 'viem';
 import { hexToBytes, parseAbiItem } from 'viem';
 import MazeKingNFTAbi from '../lib/abi/MazeKingNFT.json';
@@ -216,8 +216,8 @@ function decodeImageFromTokenUri(tokenUri: string): string | null {
 export function useGalleryMazes(
   enabled: boolean
 ): State & { refresh: () => void } {
-  const { chain } = useAccount();
-  const publicClient = usePublicClient();
+  // Public data, so it must be readable without a wallet.
+  const { chain, publicClient } = useReadChain();
   const [state, setState] = useState<State>({
     loading: false,
     error: null,
