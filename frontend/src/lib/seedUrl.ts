@@ -46,7 +46,36 @@ export function seedFromLocation(
   return legacy ?? null;
 }
 
-/** True when a path shows a maze. `/` is the directions screen. */
+/**
+ * Path for replaying a specific minted maze.
+ *
+ * A replay is identified by token id rather than by a seed: the maze may have
+ * been minted by someone else, and its seed is not always recoverable. Giving
+ * it a real URL rather than holding it only in memory means it can be linked,
+ * refreshed and reached with the back button, like everything else in the game.
+ */
+export function tokenPath(tokenId: bigint | string): string {
+  return `/m/${tokenId.toString()}`;
+}
+
+/** The token id in a replay path, or null. */
+export function tokenIdFromLocation(pathname: string): bigint | null {
+  const match = /^\/m\/(\d+)$/.exec(pathname);
+  if (!match) return null;
+  try {
+    return BigInt(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a path shows a maze. `/` is the directions screen.
+ *
+ * Both forms count: `/s/<seed>` for a maze grown from a name, `/m/<tokenId>`
+ * for one replayed from the chain. Missing the second is what sent "play this
+ * maze" back to the directions screen -- the game only renders on a game path.
+ */
 export function isGamePath(pathname: string): boolean {
-  return pathname.startsWith('/s/');
+  return pathname.startsWith('/s/') || pathname.startsWith('/m/');
 }

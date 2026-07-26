@@ -10,11 +10,15 @@ import {
   seedToPath,
   seedFromLocation,
   isGamePath,
+  tokenPath,
+  tokenIdFromLocation,
 } from '../seedUrl';
 
 describe('seedToPath', () => {
   it('gives the default seed a path too, since / is the directions screen', () => {
-    expect(seedToPath(DEFAULT_SEED)).toBe(`/s/${encodeURIComponent(DEFAULT_SEED)}`);
+    expect(seedToPath(DEFAULT_SEED)).toBe(
+      `/s/${encodeURIComponent(DEFAULT_SEED)}`
+    );
   });
 
   it('uses /s/ for a named seed', () => {
@@ -82,9 +86,42 @@ describe('isGamePath', () => {
     expect(isGamePath('/s/SNARK')).toBe(true);
   });
 
+  it('recognises replay paths', () => {
+    // Omitting this is what sent "play this maze" to the directions screen:
+    // the game only renders on a game path, and a replay had none.
+    expect(isGamePath('/m/12345')).toBe(true);
+  });
+
   it('rejects the directions screen and the other pages', () => {
     expect(isGamePath('/')).toBe(false);
     expect(isGamePath('/gallery')).toBe(false);
     expect(isGamePath('/mazes')).toBe(false);
+  });
+});
+
+describe('replay paths', () => {
+  it('round trips a token id', () => {
+    const id =
+      961392101917757583158880915683360621570775338810754963585134247041933107395n;
+    expect(tokenIdFromLocation(tokenPath(id))).toBe(id);
+  });
+
+  it('keeps full precision on ids far beyond Number.MAX_SAFE_INTEGER', () => {
+    // Token ids are 256-bit hashes. Anything that round-trips through a
+    // JavaScript number silently names a different maze.
+    const id = 2n ** 255n + 7n;
+    expect(tokenIdFromLocation(tokenPath(id))).toBe(id);
+  });
+
+  it('is not a seed path', () => {
+    expect(seedFromLocation('/m/123', '')).toBeNull();
+  });
+
+  it('returns null for anything that is not a replay path', () => {
+    expect(tokenIdFromLocation('/s/SNARK')).toBeNull();
+    expect(tokenIdFromLocation('/m/')).toBeNull();
+    expect(tokenIdFromLocation('/m/notanumber')).toBeNull();
+    expect(tokenIdFromLocation('/m/12/34')).toBeNull();
+    expect(tokenIdFromLocation('/')).toBeNull();
   });
 });
