@@ -182,7 +182,7 @@ jobs:
           # presigned URL sized to the exact archive, PUT the archive there, and
           # only then tell Scaleway to deploy what was uploaded. `deploy` takes
           # no zip-file argument at all.
-          url=$(scw function function get-upload-url "$fn_id" zip-size="$size" -o json | jq -r '.url')
+          url=$(scw function function get-upload-url "$fn_id" content-length="$size" -o json | jq -r '.url')
           if [ -z "$url" ] || [ "$url" = "null" ]; then
             echo "::error::Scaleway returned no upload URL"
             exit 1
