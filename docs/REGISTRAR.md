@@ -152,6 +152,7 @@ workflow reads secrets first and falls back to variables. Neither is a
 credential, but both identify an account, and whether that is worth concealing
 is the operator's judgement rather than this file's.
 | `SCW_FUNCTION_NAMESPACE` | Defaults to `mazeking`. |
+| `SCW_FUNCTION_RUNTIME` | Defaults to `node22`. Scaleway retires runtimes, and creating a function on a retired one fails outright rather than falling back. |
 | `VITE_ATTESTOR_URL` | The deployed function's URL, read by the **frontend** deploy. |
 
 The workflow exercises the built artifact before shipping it — it runs the
